@@ -62,10 +62,9 @@ resource "vercel_project" "web" {
     production_branch = "main"
   }
 
-  root_directory   = "apps/web"
-  install_command  = "cd ../.. && pnpm install --frozen-lockfile"
-  build_command    = "cd ../.. && pnpm --filter web build"
-  output_directory = ".next"
+  # Vercel auto-detects pnpm workspaces from packageManager in root package.json;
+  # leave install/build commands at defaults.
+  root_directory = "apps/web"
 }
 
 resource "vercel_project_environment_variable" "all" {
