@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@aifredo/shared": "workspace:*",
+    "@supabase/supabase-js": "^2.45.4",
     "@vercel/functions": "^2.0.0",
     "next": "^15.0.3",
     "react": "^19.0.0",

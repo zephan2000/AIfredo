@@ -11,6 +11,7 @@ locals {
     BRAIN_BEARER_TOKEN        = random_password.brain_bearer.result
     TELEGRAM_BOT_TOKEN        = var.telegram_bot_token
     GCP_PROJECT_ID            = var.gcp_project_id
+    AIFREDO_DOMAIN            = var.domain
   }
 }
 

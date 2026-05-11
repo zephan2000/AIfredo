@@ -1,0 +1,58 @@
+name: Deploy brain to VM
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "apps/brain/**"
+      - "packages/shared/**"
+      - "pnpm-lock.yaml"
+
+concurrency:
+  group: deploy-brain
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Workload Identity Federation. Setup is a Phase 0+ task — see
+      # docs/self-host.md. Until WIF is wired up this workflow is dispatch-only
+      # and will fail on the auth step; that's fine since cloud-init already
+      # cloned the repo and built brain on first boot.
+      - name: Authenticate to GCP (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pull, build, restart on VM
+        run: |
+          set -euo pipefail
+          gcloud compute ssh "${{ secrets.BRAIN_VM_NAME }}" \
+            --tunnel-through-iap \
+            --zone "${{ secrets.BRAIN_VM_ZONE }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --command "sudo -u aifredo bash -lc 'cd /opt/AIfredo && git pull --ff-only origin main && pnpm install --frozen-lockfile && pnpm --filter brain build' && sudo systemctl restart aifredo-brain.service"
+
+      - name: Verify health
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if curl -fsS "https://brain.${{ secrets.AIFREDO_DOMAIN }}/health" > /dev/null; then
+              echo "healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "brain did not become healthy in 30s"
+          exit 1
