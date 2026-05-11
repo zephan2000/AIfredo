@@ -1,0 +1,13 @@
+project_id = "aifredo"
+
+[db]
+major_version = 15
+
+[api]
+enabled = true
+
+[auth]
+enabled = true
+
+[storage]
+enabled = true
