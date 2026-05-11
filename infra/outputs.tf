@@ -1,0 +1,44 @@
+output "vm_external_ip" {
+  description = "Static external IP of the brain VM."
+  value       = google_compute_address.brain.address
+}
+
+output "vm_name" {
+  description = "GCE VM instance name."
+  value       = google_compute_instance.brain.name
+}
+
+output "vm_zone" {
+  description = "GCE zone of the VM."
+  value       = google_compute_instance.brain.zone
+}
+
+output "brain_url" {
+  description = "Public URL of the brain via Cloudflare Tunnel."
+  value       = "https://brain.${var.domain}"
+}
+
+output "vercel_url" {
+  description = "Vercel deployment URL."
+  value       = local.vercel_url
+}
+
+output "mcp_issuer_url" {
+  description = "MCP OAuth 2.1 issuer URL (Streamable HTTP)."
+  value       = "${local.vercel_url}/api/mcp"
+}
+
+output "supabase_ref" {
+  description = "Supabase project reference."
+  value       = supabase_project.main.id
+}
+
+output "supabase_url" {
+  description = "Supabase API URL."
+  value       = "https://${supabase_project.main.id}.supabase.co"
+}
+
+output "tfstate_bucket" {
+  description = "GCS bucket holding OpenTofu state."
+  value       = google_storage_bucket.tfstate.name
+}

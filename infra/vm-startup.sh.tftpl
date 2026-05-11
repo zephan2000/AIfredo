@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# AIfredo brain VM bootstrap.
+# Rendered by templatefile() and run as GCE startup-script on first boot.
+set -euxo pipefail
+
+exec > >(tee -a /var/log/aifredo-bootstrap.log) 2>&1
+
+# --- Swap (e2-micro has 1GB RAM; 2GB swap for safety) ---
+if ! swapon --show | grep -q /swapfile; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+echo 'vm.swappiness=10' > /etc/sysctl.d/99-aifredo.conf
+sysctl -p /etc/sysctl.d/99-aifredo.conf
+
+# --- Packages ---
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y curl git build-essential jq ca-certificates
+
+# --- Node 20 via NodeSource ---
+if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v20'; then
+  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  apt-get install -y nodejs
+fi
+npm install -g pnpm@9.12.0 @anthropic-ai/claude-code @openai/codex
+
+# --- cloudflared ---
+if ! command -v cloudflared >/dev/null 2>&1; then
+  curl -fsSL -o /usr/local/bin/cloudflared \
+    https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+  chmod +x /usr/local/bin/cloudflared
+fi
+
+# --- Service user ---
+if ! id aifredo >/dev/null 2>&1; then
+  useradd -m -s /bin/bash -d /home/aifredo aifredo
+fi
+
+# --- Repo checkout + build ---
+mkdir -p /opt/AIfredo
+chown aifredo:aifredo /opt/AIfredo
+if [[ ! -d /opt/AIfredo/.git ]]; then
+  sudo -u aifredo git clone ${repo_url} /opt/AIfredo
+fi
+cd /opt/AIfredo
+sudo -u aifredo git fetch origin
+sudo -u aifredo git checkout main
+sudo -u aifredo git pull --ff-only origin main || true
+sudo -u aifredo pnpm install --frozen-lockfile || sudo -u aifredo pnpm install
+sudo -u aifredo pnpm --filter brain build || true   # brain may not exist yet on first boot
+
+# --- /opt/AIfredo/.env (rw for root, r for aifredo group) ---
+cat > /opt/AIfredo/.env <<ENVEOF
+PORT=8080
+BRAIN_BEARER_TOKEN=${brain_bearer_token}
+SUPABASE_URL=${supabase_url}
+SUPABASE_SERVICE_ROLE_KEY=${supabase_service_role_key}
+VERCEL_INGEST_URL=${vercel_ingest_url}
+DOMAIN=${domain}
+NODE_ENV=production
+ENVEOF
+chown root:aifredo /opt/AIfredo/.env
+chmod 640 /opt/AIfredo/.env
+
+# --- systemd: cloudflared tunnel ---
+# Token written via sed to avoid template double-escaping inside the unit body.
+cat > /etc/systemd/system/cloudflared.service <<'UNITEOF'
+[Unit]
+Description=Cloudflare Tunnel (AIfredo)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/cloudflared tunnel run --token __TUNNEL_TOKEN__
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+sed -i "s|__TUNNEL_TOKEN__|${tunnel_token}|" /etc/systemd/system/cloudflared.service
+
+# --- systemd: brain ---
+cat > /etc/systemd/system/aifredo-brain.service <<'UNITEOF'
+[Unit]
+Description=AIfredo Brain
+After=network.target cloudflared.service
+
+[Service]
+Type=simple
+User=aifredo
+WorkingDirectory=/opt/AIfredo/apps/brain
+EnvironmentFile=/opt/AIfredo/.env
+ExecStart=/usr/bin/node /opt/AIfredo/apps/brain/dist/server.js
+Restart=on-failure
+RestartSec=5s
+MemoryMax=600M
+
+[Install]
+WantedBy=multi-user.target
+UNITEOF
+
+systemctl daemon-reload
+systemctl enable --now cloudflared.service
+# Brain may fail to start until CLIs are OAuth'd; that's fine, restart later.
+systemctl enable aifredo-brain.service || true
+systemctl start aifredo-brain.service || true
+
+date -Iseconds > /var/run/aifredo-bootstrap-done
+echo "AIfredo bootstrap complete."

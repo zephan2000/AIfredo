@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars and fill in.
+# terraform.tfvars is gitignored.
+
+# --- General ---
+domain = "example.com"  # the apex domain you own in Cloudflare
+
+# --- GCP ---
+gcp_project_id      = "aifredo-123456"        # `gcloud projects create` first
+gcp_region          = "us-west1"               # free e2-micro region
+gcp_zone            = "us-west1-a"
+gcp_billing_account = "012345-ABCDEF-GHIJKL"  # `gcloud billing accounts list`
+tfstate_bucket_name = "aifredo-tfstate-<random-suffix>"  # must be globally unique
+ssh_pub_key         = "ssh-ed25519 AAAA... your-email"
+
+# --- Cloudflare ---
+cloudflare_account_id = "abc123..."
+cloudflare_zone_id    = "def456..."
+cloudflare_api_token  = "redacted"  # Zone:DNS:Edit + Account:Cloudflare Tunnel:Edit
+
+# --- Vercel ---
+vercel_api_token = "redacted"  # https://vercel.com/account/tokens
+# vercel_team_id = "team_..."  # only if using a team
+
+# --- GitHub ---
+github_owner     = "zephan2000"
+github_token     = "redacted"  # PAT with `repo` + `workflow`
+github_repo_name = "AIfredo"
+
+# --- Supabase ---
+supabase_access_token = "sbp_redacted"  # https://supabase.com/dashboard/account/tokens
+supabase_org_id       = "your-org-slug"
+supabase_db_password  = "redacted"  # generate a strong one; you can't change it later easily
+supabase_region       = "us-west-1"
+
+# --- Telegram ---
+telegram_bot_token     = "redacted"  # @BotFather → /newbot
+admin_telegram_user_id = "123456789"  # your numeric Telegram user ID (e.g. via @userinfobot)
