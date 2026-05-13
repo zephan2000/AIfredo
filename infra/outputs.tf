@@ -42,3 +42,9 @@ output "tfstate_bucket" {
   description = "GCS bucket holding OpenTofu state."
   value       = google_storage_bucket.tfstate.name
 }
+
+output "telegram_webhook_secret" {
+  description = "Shared secret Telegram includes in X-Telegram-Bot-Api-Secret-Token. Used during setWebhook registration."
+  value       = random_password.telegram_webhook_secret.result
+  sensitive   = true
+}

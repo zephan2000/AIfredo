@@ -22,8 +22,8 @@ apt-get update -y
 apt-get install -y curl git build-essential jq ca-certificates
 
 # --- Node 20 via NodeSource ---
-if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v20'; then
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+if ! command -v node >/dev/null 2>&1 || ! node -v | grep -q '^v22'; then
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 fi
 npm install -g pnpm@9.12.0 @anthropic-ai/claude-code @openai/codex
@@ -96,7 +96,7 @@ Type=simple
 User=aifredo
 WorkingDirectory=/opt/AIfredo/apps/brain
 EnvironmentFile=/opt/AIfredo/.env
-ExecStart=/usr/bin/node /opt/AIfredo/apps/brain/dist/server.js
+ExecStart=/usr/bin/node --import tsx /opt/AIfredo/apps/brain/dist/server.js
 Restart=on-failure
 RestartSec=5s
 MemoryMax=600M
