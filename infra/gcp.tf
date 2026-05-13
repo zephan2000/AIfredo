@@ -151,8 +151,7 @@ resource "google_billing_budget" "alert" {
 
   amount {
     specified_amount {
-      currency_code = "USD"
-      units         = "1"
+      units = "1"
     }
   }
 

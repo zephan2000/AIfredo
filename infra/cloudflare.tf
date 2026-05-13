@@ -5,7 +5,7 @@ resource "random_id" "tunnel_secret" {
 resource "cloudflare_zero_trust_tunnel_cloudflared" "brain" {
   account_id    = var.cloudflare_account_id
   name          = "aifredo-brain"
-  tunnel_secret = random_id.tunnel_secret.b64_std
+  secret = random_id.tunnel_secret.b64_std
   config_src    = "cloudflare"
 }
 

@@ -27,18 +27,14 @@ terraform {
       version = "~> 3.6"
     }
   }
-
-  # Bucket is supplied via `-backend-config=bucket=...` in bootstrap.sh
-  # (chicken-and-egg: the bucket is provisioned in the first apply with local state)
-  backend "gcs" {
-    prefix = "aifredo/state"
-  }
 }
 
 provider "google" {
-  project = var.gcp_project_id
-  region  = var.gcp_region
-  zone    = var.gcp_zone
+  project               = var.gcp_project_id
+  region                = var.gcp_region
+  zone                  = var.gcp_zone
+  billing_project       = var.gcp_project_id
+  user_project_override = true
 }
 
 provider "cloudflare" {

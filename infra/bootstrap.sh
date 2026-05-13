@@ -31,16 +31,26 @@ if [[ -z "$TFSTATE_BUCKET" || -z "$GCP_PROJECT" ]]; then
   exit 1
 fi
 
-echo "==> [1/4] Bootstrap state bucket (local state)"
 rm -rf .terraform .terraform.lock.hcl
-tofu init -backend=false
-tofu apply \
-  -target=google_project_service.required \
-  -target=google_storage_bucket.tfstate \
-  -auto-approve
+# Recover from a prior failed run that left the backend disabled.
+[[ -f backend.tf.disabled && ! -f backend.tf ]] && mv backend.tf.disabled backend.tf
 
-echo "==> [2/4] Migrate state to GCS"
-tofu init -migrate-state -force-copy -backend-config="bucket=${TFSTATE_BUCKET}"
+if gcloud storage buckets describe "gs://${TFSTATE_BUCKET}" >/dev/null 2>&1; then
+  echo "==> [1-2/4] State bucket exists, skipping bootstrap; init against GCS"
+  tofu init -backend-config="bucket=${TFSTATE_BUCKET}"
+else
+  echo "==> [1/4] Bootstrap state bucket (local state)"
+  mv backend.tf backend.tf.disabled
+  tofu init
+  tofu apply \
+    -target=google_project_service.required \
+    -target=google_storage_bucket.tfstate \
+    -auto-approve
+
+  echo "==> [2/4] Migrate state to GCS"
+  mv backend.tf.disabled backend.tf
+  tofu init -migrate-state -force-copy -backend-config="bucket=${TFSTATE_BUCKET}"
+fi
 
 echo "==> [3/4] Full apply"
 tofu apply -auto-approve

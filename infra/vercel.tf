@@ -11,7 +11,7 @@ locals {
     SUPABASE_ANON_KEY = {
       value     = data.supabase_apikeys.main.anon_key
       sensitive = true
-      target    = ["production", "preview", "development"]
+      target    = ["production", "preview"]
     }
     SUPABASE_SERVICE_ROLE_KEY = {
       value     = data.supabase_apikeys.main.service_role_key

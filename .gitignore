@@ -177,3 +177,4 @@ scratch/
 
 # Turbo / build caches
 .turbo/
+bootstrap_result.txt
