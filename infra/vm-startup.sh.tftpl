@@ -61,10 +61,67 @@ SUPABASE_URL=${supabase_url}
 SUPABASE_SERVICE_ROLE_KEY=${supabase_service_role_key}
 VERCEL_INGEST_URL=${vercel_ingest_url}
 DOMAIN=${domain}
+CREDS_BUCKET=${creds_bucket}
 NODE_ENV=production
 ENVEOF
 chown root:aifredo /opt/AIfredo/.env
 chmod 640 /opt/AIfredo/.env
+
+# --- CLI credential snapshot passphrase (root-only) ---
+cat > /opt/AIfredo/creds.key <<KEYEOF
+${creds_passphrase}
+KEYEOF
+chown root:root /opt/AIfredo/creds.key
+chmod 600 /opt/AIfredo/creds.key
+
+# --- Snapshot script (cron-driven, every 6h) ---
+cat > /opt/AIfredo/snapshot-creds.sh <<'SNAPEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+BUCKET="$(grep ^CREDS_BUCKET= /opt/AIfredo/.env | cut -d= -f2)"
+SRC=/home/aifredo
+[[ -f "$SRC/.claude/.credentials.json" || -f "$SRC/.codex/auth.json" ]] || { echo "$(date -Iseconds) no creds, skip"; exit 0; }
+TOKEN=$(curl -fsSH "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token)
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+sudo -u aifredo tar -C "$SRC" -czf - .claude/.credentials.json .codex/auth.json 2>/dev/null \
+  | openssl enc -aes-256-cbc -pbkdf2 -salt -pass file:/opt/AIfredo/creds.key -out "$TMP"
+curl -fsS -X POST \
+  "https://storage.googleapis.com/upload/storage/v1/b/$${BUCKET}/o?uploadType=media&name=snapshot-latest.tar.gz.enc" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary "@$TMP" >/dev/null
+echo "$(date -Iseconds) snapshot ok ($(stat -c %s "$TMP")b)"
+SNAPEOF
+chmod 750 /opt/AIfredo/snapshot-creds.sh
+chown root:root /opt/AIfredo/snapshot-creds.sh
+
+cat > /etc/cron.d/aifredo-snapshot <<'CRONEOF'
+0 */6 * * * root /opt/AIfredo/snapshot-creds.sh >> /var/log/aifredo-snapshot.log 2>&1
+CRONEOF
+
+# --- Restore CLI credentials from snapshot on fresh VM ---
+if [[ ! -f /home/aifredo/.claude/.credentials.json && ! -f /home/aifredo/.codex/auth.json ]]; then
+  echo "No CLI credentials present; checking for snapshot in gs://${creds_bucket}..."
+  RESTORE_TOKEN=$(curl -fsSH "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token || echo "")
+  if [[ -n "$RESTORE_TOKEN" ]]; then
+    STATUS=$(curl -sS -o /tmp/snap.enc -w "%%{http_code}" \
+      "https://storage.googleapis.com/storage/v1/b/${creds_bucket}/o/snapshot-latest.tar.gz.enc?alt=media" \
+      -H "Authorization: Bearer $RESTORE_TOKEN" || echo "fail")
+    if [[ "$STATUS" == "200" && -s /tmp/snap.enc ]]; then
+      mkdir -p /home/aifredo/.claude /home/aifredo/.codex
+      openssl enc -aes-256-cbc -d -pbkdf2 -pass file:/opt/AIfredo/creds.key -in /tmp/snap.enc \
+        | tar -C /home/aifredo -xzf -
+      chown -R aifredo:aifredo /home/aifredo/.claude /home/aifredo/.codex
+      chmod 700 /home/aifredo/.claude /home/aifredo/.codex
+      chmod 600 /home/aifredo/.claude/.credentials.json /home/aifredo/.codex/auth.json 2>/dev/null || true
+      echo "Credentials restored from snapshot."
+    else
+      echo "No snapshot found (HTTP $STATUS); manual OAuth required."
+    fi
+    rm -f /tmp/snap.enc
+  fi
+fi
 
 # --- systemd: cloudflared tunnel ---
 # Token written via sed to avoid template double-escaping inside the unit body.

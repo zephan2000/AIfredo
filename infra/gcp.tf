@@ -73,6 +73,44 @@ resource "random_password" "telegram_webhook_secret" {
   special = false
 }
 
+# Passphrase used to encrypt CLI credential snapshots before uploading to GCS.
+# Survives VM replacement because it lives in TF state, not on the VM disk —
+# the new VM reads it from /opt/AIfredo/creds.key (re-rendered by startup
+# script) and decrypts the snapshot pulled from GCS.
+resource "random_password" "creds_passphrase" {
+  length  = 48
+  special = false
+}
+
+# --- Credential snapshot bucket (encrypted; survives VM replacement) ---
+resource "google_storage_bucket" "creds" {
+  name                        = "${var.gcp_project_id}-aifredo-creds"
+  location                    = var.gcp_region
+  force_destroy               = false
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition {
+      num_newer_versions = 10
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_storage_bucket_iam_member" "creds_brain_rw" {
+  bucket = google_storage_bucket.creds.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.brain.email}"
+}
+
 # --- Brain VM ---
 resource "google_compute_instance" "brain" {
   name         = "aifredo-brain"
@@ -100,6 +138,7 @@ resource "google_compute_instance" "brain" {
     scopes = [
       "https://www.googleapis.com/auth/logging.write",
       "https://www.googleapis.com/auth/monitoring.write",
+      "https://www.googleapis.com/auth/devstorage.read_write",
     ]
   }
 
@@ -116,6 +155,8 @@ resource "google_compute_instance" "brain" {
     supabase_service_role_key = data.supabase_apikeys.main.service_role_key
     vercel_ingest_url         = "${local.vercel_url}/api/ingest"
     domain                    = var.domain
+    creds_bucket              = google_storage_bucket.creds.name
+    creds_passphrase          = random_password.creds_passphrase.result
   })
 
   allow_stopping_for_update = true
@@ -123,6 +164,7 @@ resource "google_compute_instance" "brain" {
   depends_on = [
     google_project_service.required,
     cloudflare_zero_trust_tunnel_cloudflared_config.brain,
+    google_storage_bucket_iam_member.creds_brain_rw,
   ]
 }
 

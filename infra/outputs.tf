@@ -48,3 +48,8 @@ output "telegram_webhook_secret" {
   value       = random_password.telegram_webhook_secret.result
   sensitive   = true
 }
+
+output "creds_bucket" {
+  description = "GCS bucket holding encrypted CLI credential snapshots. New VMs restore from here on boot."
+  value       = google_storage_bucket.creds.name
+}
