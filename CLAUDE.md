@@ -4,7 +4,7 @@ Personal autonomous agent hub. Telegram + web + MCP frontends; Claude Code CLI a
 
 ## Status
 
-**Phase 0 (scaffold + IaC) complete, CI green.** Infra not yet applied — see `docs/self-host.md` for the bootstrap walkthrough. Awaiting first `tofu apply` against real accounts.
+**Phase 0 deployed.** As of 2026-05-13: brain VM (`aifredo-brain`, us-west1-a), Cloudflare tunnel at `agent.zephan.space`, Vercel `aifredo-web.vercel.app`, Supabase `uuberahlfkoieypboxlh` in `us-west-1`, GCP project `aifredo-zephan`, state bucket `aifredo-tfstate-4079f57f`. Telegram round-trip verified end-to-end. ChatGPT-Plus auth lives under `matildalimyingxin@gmail.com` (different from Claude account); both creds are on the VM disk only.
 
 ## Architecture in one paragraph
 
@@ -32,7 +32,7 @@ A long-lived Hono service on a free **GCP e2-micro VM in us-west1** ("the brain"
 - `claude -p --output-format stream-json --verbose` emits NDJSON: `system.init` → `rate_limit_event` → `assistant` → `result`. `apiKeySource: "none"` confirms OAuth path. `rate_limit_event.rate_limit_info` exposes `status`, `resetsAt`, `rateLimitType`, `overageStatus` — used by `apps/brain/src/quota.ts` for deterministic Claude→Codex fallback.
 - `codex exec --skip-git-repo-check --json --output-last-message <file> -s workspace-write -C <scratch> -` works headlessly. Events: `thread.started` → `turn.started` → `item.completed` (with `agent_message.text`) → `turn.completed`.
 - **Claude Code creds on macOS are in Keychain (not portable). On Linux they're at `~/.claude/.credentials.json` (portable).** OAuth must happen on the Linux VM; never copy from Mac.
-- **Codex auth (`~/.codex/auth.json`) is plain JSON, portable.** `access_token` + `refresh_token` + `account_id`. `OPENAI_API_KEY` is null when using ChatGPT subscription.
+- **Codex auth (`~/.codex/auth.json`) is plain JSON, portable.** Schema (codex CLI v0.130+): top-level `auth_mode`, `last_refresh`, `OPENAI_API_KEY`, and a nested `tokens.{access_token, refresh_token, id_token, account_id}`. `auth_mode = "chatgpt"` + `OPENAI_API_KEY = null` confirms subscription auth.
 
 ## Common gotchas
 
@@ -75,7 +75,9 @@ docs/self-host.md
 
 ## Open Phase-0+ items (small follow-ups)
 
-1. Expose `telegram_webhook_secret` as a TF output so webhook registration is one command.
+1. ~~Expose `telegram_webhook_secret` as a TF output~~ — done 2026-05-13.
 2. Wire **GCP Workload Identity Federation** so `deploy-brain.yml` actually runs (it's dispatch-only and will fail on auth until WIF is set up).
-3. **Encrypted snapshot of VM credentials to Supabase Storage** for DR (currently if VM dies, you re-OAuth).
+3. **Encrypted snapshot of VM credentials to Supabase Storage** for DR — bitten once already: the metadata_startup_script field forces VM replacement on any tweak to vm-startup.sh.tftpl, which wipes OAuth and requires a manual re-login.
 4. Stub a `/api/health` route on Vercel that pings brain `/health` and aggregates — useful for uptime checks.
+5. `github_actions_secret` resources emit deprecation warnings (`plaintext_value` → `value`). Mass-rename when convenient; non-blocking.
+6. `packages/shared/package.json` declares `main: ./src/index.ts`. Works in dev (tsx) and brain (compiled then tsx-loaded), but Next.js needed the `.js` suffixes removed from re-exports inside the shared package, and the brain systemd unit needs `node --import tsx` to load the .ts source. Consider building shared properly and pointing `main` at `dist/index.js` if this trips us again.
