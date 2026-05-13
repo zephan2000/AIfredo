@@ -1,129 +1,306 @@
 # Self-hosting AIfredo
 
-Full walkthrough for spinning up AIfredo on free infra with your own subscriptions. Single-operator deployment; tested on macOS / Linux.
+Deployment guide for a single-operator AIfredo hub. Free-tier only; tested on macOS host with Linux VM. Every step lists the edge case to expect — read those first if an AI agent is driving.
 
-## What you'll need
+## Reading this with an agent
 
-### Accounts (all free tiers)
+Hand your agent this file plus [CLAUDE.md](../CLAUDE.md). The "⚠" callouts inline are real traps from prior deploys; have the agent verify each one as it goes, don't skip them.
 
-- **GCP** account with billing account attached (CC required to access free tier, but a `$0` budget alert is included)
-- **Cloudflare** account with your domain's DNS pointed at Cloudflare
-- **Vercel** account (personal plan)
-- **GitHub** account
-- **Supabase** account
-- **Telegram** account
-- **Claude Pro/Max** subscription (used via Claude Code CLI OAuth)
-- **ChatGPT Plus/Pro** subscription (used via Codex CLI ChatGPT login)
+---
 
-### Local tools
+## Phase A — Accounts & local tools (one-time, manual)
+
+You need these accounts active before any command runs. All free tier:
+
+- **GCP** with a billing account attached (credit card required even for `$0`; budget alert at 1%/50%/100% is provisioned)
+- **Cloudflare** with your domain's nameservers already pointed at Cloudflare DNS — verify with `dig +short NS yourdomain.com` (must show `*.ns.cloudflare.com.`)
+- **Vercel** (personal plan)
+- **GitHub** (fork or own this repo)
+- **Supabase** — note: free tier caps at 2 active projects per org
+- **Telegram** (you'll create a bot)
+- **Claude Pro/Max** subscription
+- **ChatGPT Plus/Pro** subscription
+
+Local tools:
 
 ```sh
-# macOS
-brew install opentofu google-cloud-sdk gh supabase/tap/supabase pnpm jq
-# Node 20 via fnm/nvm if not present
+brew install opentofu supabase/tap/supabase gh pnpm jq
+# Do NOT install gcloud via brew --cask gcloud-cli — its virtualenv setup
+# fails on recent macOS. Use Google's tarball instead:
+cd ~ && curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-darwin-arm.tar.gz
+tar -xf google-cloud-cli-darwin-arm.tar.gz
+./google-cloud-sdk/install.sh --quiet --path-update true
+exec -l zsh
 ```
 
-Verify:
+⚠ **zsh interactive_comments is off by default.** Pasting commands with `# comments` (especially comments containing apostrophes like `we'll`) will produce parse errors. Either run `echo 'setopt interactive_comments' >> ~/.zshrc && exec -l zsh`, or strip comments from anything you paste.
+
+Auth:
+
 ```sh
-tofu version       # >= 1.7
-gcloud version
-gh --version
-supabase --version
-pnpm -v
+gcloud auth login
+gcloud auth application-default login
 ```
 
-## Step 1 — Pre-provision (one-time, manual)
+---
 
-1. **GCP project**: `gcloud projects create aifredo-<suffix>` then link billing:
-   ```sh
-   gcloud beta billing projects link aifredo-<suffix> --billing-account=012345-ABCDEF-GHIJKL
-   ```
-2. **Telegram bot**: open Telegram → @BotFather → `/newbot` → save the token.
-3. **Telegram user ID**: send `/start` to @userinfobot, save your numeric ID.
-4. **Cloudflare API token**: dash → My Profile → API Tokens → Create with permissions:
-   - Zone:DNS:Edit (your zone)
-   - Account:Cloudflare Tunnel:Edit
-5. **Vercel API token**: vercel.com/account/tokens → create.
-6. **GitHub PAT**: scopes `repo` + `workflow`.
-7. **Supabase PAT**: supabase.com/dashboard/account/tokens → create.
-8. **SSH key**: `ssh-keygen -t ed25519 -C aifredo` if you don't have one; save the public key for `terraform.tfvars`.
+## Phase B — Pre-provision (one-time, ~15 min)
 
-## Step 2 — Clone and configure
+These produce the values that go into `infra/terraform.tfvars`. Do them in this order; later steps need earlier ones.
+
+### B1. GCP project
 
 ```sh
-git clone https://github.com/<you>/AIfredo.git
-cd AIfredo/infra
+PROJECT_ID="aifredo-<your-suffix>"   # globally unique, 6-30 chars, lowercase, no underscores
+gcloud projects create "$PROJECT_ID" --name="AIfredo"
+gcloud billing accounts list                          # copy ACCOUNT_ID
+gcloud beta billing projects link "$PROJECT_ID" --billing-account=<ACCOUNT_ID>
+gcloud config set project "$PROJECT_ID"
+gcloud auth application-default set-quota-project "$PROJECT_ID"
+gcloud services enable cloudresourcemanager.googleapis.com serviceusage.googleapis.com cloudbilling.googleapis.com
+```
+
+⚠ The last `gcloud services enable` is critical. `google_project_service` resources in TF need Cloud Resource Manager API to *already* be on — chicken-and-egg. Without this the apply fails with `SERVICE_DISABLED`.
+
+⚠ `set-quota-project` is needed so the `google_billing_budget` TF resource can call billingbudgets with the right billing context (also requires `user_project_override = true` on the provider, already set in [infra/providers.tf](../infra/providers.tf)).
+
+### B2. State bucket name & SSH key
+
+```sh
+echo "aifredo-tfstate-$(openssl rand -hex 4)"        # save this
+ssh-keygen -t ed25519 -C aifredo -f ~/.ssh/aifredo_ed25519 -N ""
+cat ~/.ssh/aifredo_ed25519.pub                       # save the full single line
+```
+
+⚠ The state bucket has `force_destroy = false` and survives `tofu destroy`. Name it intentionally; you cannot reuse the name after destroy unless you empty + delete the bucket manually.
+
+### B3. Cloudflare token (browser)
+
+dash.cloudflare.com → pick your zone → right sidebar copies **Account ID** and **Zone ID**. Then My Profile → API Tokens → **Create Custom Token**:
+
+- Name: `aifredo-tofu`
+- Permissions: `Zone:DNS:Edit` (scoped to your zone) + `Account:Cloudflare Tunnel:Edit` (scoped to your account)
+- TTL: 1 year
+
+⚠ Do **not** use the Global API Key. Custom token only.
+⚠ Do **not** pre-create the `agent.<domain>` CNAME — TF makes it ([infra/cloudflare.tf](../infra/cloudflare.tf)).
+
+### B4. Other secrets
+
+- **Vercel**: vercel.com/account/tokens → **Full Account** scope, 1 year
+- **GitHub PAT**: github.com/settings/tokens → **classic** with `repo` + `workflow` scopes (fine-grained doesn't cover all repo-secret ops)
+- **Supabase PAT**: supabase.com/dashboard/account/tokens
+- **Supabase org slug**: dashboard URL `https://supabase.com/dashboard/org/<slug>` ← that's your `supabase_org_id`
+- **Supabase DB password**: `openssl rand -base64 24` ← save it; rotating it requires rebuilding the project
+- **Telegram bot**: @BotFather → `/newbot` (username must end in `bot`)
+- **Your Telegram user ID**: @userinfobot → `/start` ← double-check; a typo here locks you out
+
+⚠ Supabase `organization_id` is the **org**, not a project. If your org and a project share a name, the slugs differ — verify with:
+```sh
+SUPABASE_PAT=<paste-from-pwmgr> curl -s https://api.supabase.com/v1/organizations -H "Authorization: Bearer $SUPABASE_PAT"
+```
+
+### B5. Fill tfvars
+
+```sh
+cd ~/Projects/AIfredo/infra
 cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
+git check-ignore terraform.tfvars                    # MUST print the path
+grep -cE '^\s*[a-z_]+\s*=\s*"redacted"' terraform.tfvars   # MUST print 0
 ```
 
-Fill every value. The file is gitignored.
+⚠ If `git check-ignore` is silent, **stop** — your secrets would be committed.
 
-## Step 3 — Provision
+⚠ Region trade-off: brain VM is fixed to `us-west1` (free tier). `supabase_region = "us-west-1"` colocates DB; `ap-southeast-*` puts the DB closer to your laptop but cross-Pacific from the VM. Region **cannot be changed** after creation.
+
+---
+
+## Phase C — Provision (10–15 min)
 
 ```sh
 ./bootstrap.sh
 ```
 
-This does:
+What it does:
+1. Disables the gcs backend file (`mv backend.tf backend.tf.disabled`) so the state bucket itself can be provisioned with local state
+2. Migrates state to the new GCS bucket
+3. Full apply (VM, tunnel, DNS, Vercel project, Supabase project, GitHub secrets, env vars)
+4. Applies Supabase migrations
 
-1. Local-state apply of just the GCS state bucket + GCP API enablement
-2. `tofu init -migrate-state` — moves state into GCS
-3. Full `tofu apply` — creates VM, tunnel, DNS, Vercel project, Supabase project, GitHub secrets
-4. `supabase link` + `supabase db push` — applies migrations
-5. Prints the SSH command for OAuth-login
+The script is idempotent. If the state bucket already exists, it skips phases 1-2 and inits directly against GCS.
 
-Expected time: 8–12 minutes. The VM bootstrap (Node, CLIs, swap, repo clone) runs in the background after the VM boots; the `bootstrap.sh` output marks where it's at.
+⚠ **If init prompts: "Do you want to overwrite the state in the new backend with the previous state?"** — answer **`no`**. Answering `yes` overwrites the remote state with whatever leftover local state you have (from a prior failed run) and TF loses track of all your real resources. Recovery is possible because the bucket has versioning enabled (see Recovery below), but avoid it.
 
-## Step 4 — OAuth-login the CLIs on the VM (manual, one-time)
+⚠ **Currency**: the `google_billing_budget` resource omits `currency_code` so it inherits your billing account's currency. Don't hardcode USD if your account is SGD/EUR/etc — the API returns an unhelpful 400.
+
+⚠ **VM `metadata_startup_script` change forces replacement.** Any future edit to [vm-startup.sh.tftpl](../infra/vm-startup.sh.tftpl) destroys the VM and creates a new one. **OAuth credentials are wiped** — you have to re-login. Item #3 in CLAUDE.md is to snapshot creds to Supabase Storage; until then, plan around it.
+
+### Common Phase-C errors & fixes
+
+| Error | Cause | Fix |
+|---|---|---|
+| `Error 403: Cloud Resource Manager API has not been used` | CRM not enabled | re-run `gcloud services enable cloudresourcemanager.googleapis.com` (Phase B1) |
+| `Error 400: Request contains an invalid argument` on `google_billing_budget` | currency mismatch | already fixed in source; ensure you're on latest |
+| `unexpected error: BAD_REQUEST - You cannot set a Sensitive Environment Variable's target to development` | Vercel rule | already fixed; sensitive vars target `production,preview` only |
+| `Module not found: Can't resolve './types.js'` in Vercel build | `packages/shared` exporting with `.js` suffixes in Bundler mode | already fixed |
+| `Error: Node.js 20 detected without native WebSocket support` in brain logs | supabase-js needs WebSocket | `vm-startup.sh.tftpl` is on Node 22 |
+| `unrecognized arguments: opens / browser` from gcloud | zsh comment chars | strip `#` comments from pasted commands |
+
+---
+
+## Phase D — Supabase migrations (~30s)
+
+`bootstrap.sh` runs `supabase db push` in Phase 4. If it fails with "Your account does not have the necessary privileges", the Supabase CLI is logged in as a different account from your PAT. Two options:
 
 ```sh
-gcloud compute ssh aifredo-brain \
-  --tunnel-through-iap \
-  --zone us-west1-a \
-  --project <gcp_project_id>
+SUPABASE_ACCESS_TOKEN=<PAT> supabase link --project-ref <ref>
+SUPABASE_ACCESS_TOKEN=<PAT> supabase db push
 ```
 
-Once in:
+or `supabase logout && supabase login`.
+
+⚠ If you see `WARNING: Local database version differs from the linked project. Update your supabase/config.toml to fix it: [db] major_version = 17`, edit [supabase/config.toml](../supabase/config.toml) to match — Supabase provisions Postgres 17 currently.
+
+---
+
+## Phase E — OAuth the CLIs on the VM (~3 min)
+
+⚠ **Do this on the Linux VM, never your Mac.** macOS Keychain credential storage isn't portable; only Linux's `~/.claude/.credentials.json` works for the brain to read.
 
 ```sh
-sudo -u aifredo bash
-claude login    # opens a URL; open it in any browser, paste the code back
-codex login     # same flow
-exit
+gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --project <PROJECT_ID>
+```
+
+First SSH prompts to generate `~/.ssh/google_compute_engine`. Empty passphrase is fine (IAP gates access at IAM, not key level).
+
+Inside the VM:
+
+```sh
+sudo -u aifredo -i bash
+claude login
+```
+
+Open the printed URL on your Mac browser → sign in → paste the code back into SSH.
+
+For codex, **prefer device-auth** if your codex CLI version supports it (cleaner for headless):
+
+```sh
+codex login --device-auth
+```
+
+If that fails or the OpenAI page rejects the alphanumeric code, fall back to the localhost-callback workaround:
+
+```sh
+codex login          # opens browser flow that fails to reach localhost:1455
+```
+
+1. Browser tries to redirect to `http://localhost:1455/auth/callback?code=...&state=...` — fails because Mac has nothing listening
+2. Copy the **failed URL from Mac browser's address bar**
+3. From a **second Mac terminal**, SSH to the VM and `curl 'PASTE_URL'` (single quotes essential)
+4. Codex's local server on the VM receives the callback and completes auth
+
+⚠ **OAuth codes (after `?code=`) are sensitive single-use values, ~5 min TTL.** Don't paste them into chats, screenshots, or anywhere they could be observed.
+
+Verify:
+
+```sh
+ls -la ~/.claude/.credentials.json ~/.codex/auth.json     # both must exist
+jq '{auth_mode, has_api_key: (.OPENAI_API_KEY != null and .OPENAI_API_KEY != "")}' ~/.codex/auth.json
+# Expected: {"auth_mode": "chatgpt", "has_api_key": false}
+exit                                                       # leaves aifredo shell
 sudo systemctl restart aifredo-brain.service
-sudo journalctl -u aifredo-brain.service -f   # tail logs
+curl -s http://localhost:8080/health
+exit                                                       # leaves SSH
 ```
 
-Quit the SSH session.
+⚠ If `auth_mode != "chatgpt"` or `has_api_key=true`, you signed in with API-key billing instead of your ChatGPT Plus subscription. `codex logout && codex login` and pick "Sign in with ChatGPT".
 
-## Step 5 — Wire up the Telegram webhook
+⚠ Newer codex CLI stores tokens at `.tokens.{access_token,refresh_token,id_token,account_id}` (nested), not at the top level.
 
-Vercel auto-deploys on push to `main` (the project's `git_repository` setting). Once the first deploy is live, register the webhook with Telegram. The webhook secret is in the Vercel env (`TELEGRAM_WEBHOOK_SECRET`) and is generated by OpenTofu.
+---
+
+## Phase F — Telegram webhook (~30 s, after Vercel deploys)
+
+Vercel auto-deploys on push to `main`. First build takes 2–4 min.
 
 ```sh
-SECRET=$(cd infra && tofu output -raw telegram_webhook_secret)   # if exposed as output; otherwise read from Vercel env
-BOT_TOKEN=$(grep telegram_bot_token infra/terraform.tfvars | sed -E 's/.*"([^"]+)".*/\1/')
-VERCEL_URL="https://aifredo-web.vercel.app"
+cd infra
+git push origin main                                      # if you have uncommitted changes
+SECRET=$(tofu output -raw telegram_webhook_secret)
+BOT_TOKEN=$(grep telegram_bot_token terraform.tfvars | sed -E 's/.*"([^"]+)".*/\1/')
+VERCEL_URL=$(tofu output -raw vercel_url)
 
-curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
+# Verify Vercel deployment first
+curl -sX POST "${VERCEL_URL}/api/telegram" -H "X-Telegram-Bot-Api-Secret-Token: wrong" -d '{}' -w "\nHTTP %{http_code}\n"
+# Expected: {"ok":false}  HTTP 401   (our handler ran, rejected the wrong token)
+
+# Register
+curl -sX POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
   -d "url=${VERCEL_URL}/api/telegram" \
-  -d "secret_token=${SECRET}"
+  -d "secret_token=${SECRET}" | jq .
+
+# Confirm
+curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" | jq .
 ```
 
-## Step 6 — Smoke test
+⚠ Telegram registers the webhook even if your URL returns 404 — there's no upstream check. If you see `pending_update_count > 0` in `getWebhookInfo`, your endpoint isn't responding and messages are buffered.
+
+⚠ If GET on `/api/telegram` returns `405` and POST with a wrong secret returns `401`, the route is alive. A `200` on a bare GET is suspicious — likely Vercel deployment-protection serving an auth page. The project default ([infra/vercel.tf:55-57](../infra/vercel.tf#L55-L57)) is `standard_protection`, which doesn't gate `/api/*` for POSTs with secret headers, so Telegram works through it. If you change to `all` protection, you'll need a bypass.
+
+---
+
+## Phase G — Smoke test
+
+Open Telegram → your bot → send `/start`. Expect a welcome reply. Send `hi`. Expect a "Working…" placeholder, then a streamed Claude reply within ~5–15 s (one edit per 750 ms per [`TELEGRAM_EDIT_DEBOUNCE_MS`](../packages/shared/src/constants.ts)).
+
+If silent for >30 s, tail the brain log:
 
 ```sh
-curl https://agent.<your-domain>/health
-# → {"status":"ok","claude_rate_limit":null,"uptime_s":42}
-
-# In Telegram:
-/start
-hi
-/codex hello
+gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --project <PROJECT_ID> -- 'sudo journalctl -u aifredo-brain.service -n 80 --no-pager'
 ```
 
-You should see "Working…" appear, then stream into the actual response.
+---
+
+## Recovery scenarios
+
+### State got overwritten in the GCS backend (you answered `yes` to the migration prompt)
+
+State bucket has versioning. Find the larger / older version and restore it:
+
+```sh
+gsutil ls -la gs://<TFSTATE_BUCKET>/aifredo/state/default.tfstate
+# Pick the largest version with the most recent timestamp BEFORE the bad one;
+# note its generation number (after #)
+gsutil cp "gs://<TFSTATE_BUCKET>/aifredo/state/default.tfstate#<GENERATION>" gs://<TFSTATE_BUCKET>/aifredo/state/default.tfstate
+rm -f terraform.tfstate terraform.tfstate.backup
+rm -rf .terraform .terraform.lock.hcl
+tofu init -backend-config="bucket=<TFSTATE_BUCKET>"
+tofu state list                                           # confirm count looks right
+tofu apply -auto-approve
+```
+
+### VM was replaced and OAuth is gone
+
+Re-run Phase E. ~3 min if nothing else is broken.
+
+### Telegram messages not arriving
+
+```sh
+curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" | jq .
+# last_error_message and last_error_date are the leads
+```
+
+### Brain `/health` is 502
+
+VM cloud-init likely still running. Wait, then:
+```sh
+gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --project <PROJECT_ID> -- 'sudo tail /var/log/aifredo-bootstrap.log; sudo systemctl status aifredo-brain.service cloudflared.service --no-pager'
+```
+
+`AIfredo bootstrap complete.` in the log marks cloud-init done.
+
+---
 
 ## Tear-down
 
@@ -132,52 +309,19 @@ cd infra
 tofu destroy
 ```
 
-This removes everything *except* the GCS state bucket (`force_destroy = false`). Empty and delete the bucket manually if you want a fully clean slate. Telegram bot stays — delete via @BotFather if you want.
+Removes everything **except** the GCS state bucket (`force_destroy = false`). Empty + delete it manually for a fully clean slate. The Telegram bot also stays; delete via @BotFather.
 
-## Things to know
+---
 
-### Credential rotation
+## Costs
 
-Claude Code and Codex CLIs auto-refresh their OAuth tokens on use. The refreshed tokens are stored on the VM disk (`/home/aifredo/.claude/.credentials.json` and `/home/aifredo/.codex/auth.json`). If you nuke the VM, you need to OAuth-login again. A future workflow (`refresh-credentials.yml`) will snapshot these to GitHub Secrets so cron jobs running in Actions can re-create them; Phase 0 doesn't include this.
-
-### Quota awareness
-
-The brain parses `rate_limit_event` from `claude -p` stream output. When Claude is throttled, requests originally routed to Claude fall back to Codex automatically (see `apps/brain/src/quota.ts`). `/health` surfaces the last-known state.
-
-### Costs
-
-| Service | Free-tier ceiling | Expected usage |
+| Service | Free-tier ceiling | Expected |
 |---|---|---|
-| GCP e2-micro | 1 VM in us-west1/central1/east1, 30GB disk, 1GB egress NA→world/mo | well under |
-| Cloudflare Tunnel | unlimited | unlimited free for personal use |
-| Vercel Hobby | 100GB bandwidth, 100k function invocations/mo | well under |
-| Supabase | 500MB DB, 1GB storage, 5GB egress, 50k MAU | well under |
+| GCP e2-micro | 1 VM us-west1/central1/east1, 30GB disk, 1GB egress NA→world/mo | well under |
+| Cloudflare Tunnel | unlimited | unlimited |
+| Vercel Hobby | 100GB bandwidth, 100k invocations/mo | well under |
+| Supabase | 500MB DB, 1GB storage, 5GB egress | well under |
 | GitHub Actions | unlimited on public repos | well under |
-| Claude Pro/Max + ChatGPT Plus | per-subscription window | **real bottleneck** |
+| Claude Pro/Max + ChatGPT Plus | per-subscription rate limits | **real bottleneck** |
 
-The `$1 USD` budget alert with 1% / 50% / 100% thresholds fires the moment any GCP resource starts incurring charges.
-
-### Phase status
-
-| Phase | Status |
-|---|---|
-| 0 — scaffold, IaC, Telegram brain round-trip | **here** |
-| 1 — first cron skill (SG news), credential refresh workflow | next |
-| 2 — slide-deck multi-step workflow + MCP OAuth 2.1 issuer | future |
-| 3 — article breakdown, video transcribe, learn-Chinese, web UI | future |
-
-### Open Phase-0 polish items
-
-- GCP Workload Identity Federation for `deploy-brain.yml` (currently dispatch-only; see workflow file)
-- Encrypted snapshot of VM credentials to Supabase Storage for DR
-- `telegram_webhook_secret` exposed as a TF output for easier webhook registration
-
-## Troubleshooting
-
-**`brain` health check fails after `bootstrap.sh`:** SSH in and check `journalctl -u aifredo-brain -n 50`. Common causes: CLIs not OAuth'd yet (step 4), `pnpm install` still in progress on cloud-init.
-
-**Vercel build fails on `pnpm install --frozen-lockfile`:** lockfile drifted. Run `pnpm install` locally, commit `pnpm-lock.yaml`.
-
-**Cloudflare tunnel shows "down":** verify `cloudflared.service` on the VM: `sudo journalctl -u cloudflared -n 50`. The token is baked into the systemd unit by cloud-init.
-
-**`tofu apply` times out on `google_compute_instance.brain`:** likely waiting on cloud-init. The VM resource itself is up — wait, then `tofu apply` again; it will converge.
+`$1 USD` budget alert at 1%/50%/100% fires the moment any GCP resource starts incurring charges.
