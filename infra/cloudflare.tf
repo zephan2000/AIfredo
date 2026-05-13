@@ -15,7 +15,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "brain" {
 
   config {
     ingress_rule {
-      hostname = "brain.${var.domain}"
+      hostname = "agent.${var.domain}"
       service  = "http://localhost:8080"
     }
     # Catch-all required by Cloudflare Tunnel
@@ -27,7 +27,7 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "brain" {
 
 resource "cloudflare_record" "brain" {
   zone_id = var.cloudflare_zone_id
-  name    = "brain"
+  name    = "agent"
   content = "${cloudflare_zero_trust_tunnel_cloudflared.brain.id}.cfargotunnel.com"
   type    = "CNAME"
   proxied = true

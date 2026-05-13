@@ -114,7 +114,7 @@ curl -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
 ## Step 6 — Smoke test
 
 ```sh
-curl https://brain.<your-domain>/health
+curl https://agent.<your-domain>/health
 # → {"status":"ok","claude_rate_limit":null,"uptime_s":42}
 
 # In Telegram:

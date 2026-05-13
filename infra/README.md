@@ -7,7 +7,7 @@ OpenTofu configuration that provisions all of AIfredo's cloud-side state.
 | Provider | Resources |
 |---|---|
 | GCP | e2-micro VM (`aifredo-brain`), static external IP, service account, IAP-only SSH firewall, GCS state bucket, `$0` budget alert |
-| Cloudflare | Zero Trust tunnel + ingress config, CNAME `brain.<domain>` → tunnel |
+| Cloudflare | Zero Trust tunnel + ingress config, CNAME `agent.<domain>` → tunnel |
 | Vercel | Project `aifredo-web` linked to this GitHub repo, all env vars |
 | GitHub | Repository secrets for CI workflows |
 | Supabase | Free-tier project in `us-west-1` |

@@ -1,6 +1,6 @@
 # --- General ---
 variable "domain" {
-  description = "Apex domain managed in Cloudflare DNS. Tunnel publishes at brain.<domain>."
+  description = "Apex domain managed in Cloudflare DNS. Tunnel publishes at agent.<domain>."
   type        = string
 }
 

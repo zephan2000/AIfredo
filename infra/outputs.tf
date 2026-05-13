@@ -15,7 +15,7 @@ output "vm_zone" {
 
 output "brain_url" {
   description = "Public URL of the brain via Cloudflare Tunnel."
-  value       = "https://brain.${var.domain}"
+  value       = "https://agent.${var.domain}"
 }
 
 output "vercel_url" {

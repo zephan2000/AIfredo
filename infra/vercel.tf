@@ -29,7 +29,7 @@ locals {
       target    = ["production", "preview"]
     }
     BRAIN_URL = {
-      value     = "https://brain.${var.domain}"
+      value     = "https://agent.${var.domain}"
       sensitive = false
       target    = ["production", "preview", "development"]
     }
