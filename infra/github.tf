@@ -14,6 +14,7 @@ locals {
     AIFREDO_DOMAIN            = var.domain
     GCP_WIF_PROVIDER          = google_iam_workload_identity_pool_provider.github.name
     GCP_CI_SERVICE_ACCOUNT    = google_service_account.ci_deployer.email
+    ADMIN_TELEGRAM_USER_ID    = var.admin_telegram_user_id
   }
 }
 

@@ -1,0 +1,42 @@
+name: News SG (daily)
+
+on:
+  schedule:
+    # 23:00 UTC = 07:00 SGT next day. Ready by morning coffee.
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: cron-news-sg
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Run news-sg
+        env:
+          BRAIN_URL: https://agent.${{ secrets.AIFREDO_DOMAIN }}
+          BRAIN_BEARER_TOKEN: ${{ secrets.BRAIN_BEARER_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_TELEGRAM_USER_ID: ${{ secrets.ADMIN_TELEGRAM_USER_ID }}
+        run: pnpm --filter @aifredo/cron run news-sg
