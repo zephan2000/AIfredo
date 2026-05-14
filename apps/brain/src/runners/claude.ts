@@ -4,7 +4,10 @@ import type { ClaudeStreamEvent, ClaudeRateLimitInfo } from "@aifredo/shared";
 export interface ClaudeRunOptions {
   prompt: string;
   system?: string;
-  sessionId?: string;
+  // When set, resumes the named Claude Code session (`claude --resume <id>`).
+  // When unset, Claude generates a fresh session UUID; we capture it from the
+  // result event and return it so the caller can persist it.
+  resumeSessionId?: string;
   onText: (text: string) => void;
   onRateLimit: (info: ClaudeRateLimitInfo) => void;
 }
@@ -23,7 +26,7 @@ const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 
 export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
-  if (opts.sessionId) args.push("--session-id", opts.sessionId);
+  if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   if (opts.system) args.push("--system-prompt", opts.system);
 
   const child = execa(CLAUDE_BIN, args, {
@@ -36,7 +39,7 @@ export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult
   let buffered = "";
   let finalText = "";
   let cost = 0;
-  let sessionId = opts.sessionId ?? "";
+  let sessionId = opts.resumeSessionId ?? "";
   let usage = { input_tokens: 0, output_tokens: 0 };
 
   const handleEvent = (event: ClaudeStreamEvent): void => {

@@ -7,6 +7,7 @@ interface CallBrainArgs {
   provider: ProviderKind;
   prompt: string;
   system?: string;
+  session_id?: string;
   onEvent: (event: BrainStreamEvent) => void | Promise<void>;
 }
 
@@ -27,6 +28,7 @@ export async function callBrain(args: CallBrainArgs): Promise<void> {
       provider: args.provider,
       prompt: args.prompt,
       system: args.system,
+      session_id: args.session_id,
     }),
   });
   if (!res.ok || !res.body) {

@@ -14,6 +14,7 @@ import {
   recordOutboundMessage,
 } from "@/lib/users";
 import { callBrain } from "@/lib/brain";
+import { getHotSession, upsertHotSession } from "@/lib/sessions";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,10 +79,12 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       user_id: userCtx.user_id,
       kind: RUN_KINDS.TELEGRAM_CHAT,
     });
+    const hotSession = await getHotSession(chatId);
 
     let buffer = "";
     let lastEditAt = 0;
     let finalText = "";
+    let resolvedSessionId: string | undefined;
 
     const flush = async (force = false): Promise<void> => {
       const now = Date.now();
@@ -99,6 +102,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
           break;
         case "done":
           finalText = event.final;
+          resolvedSessionId = event.session_id;
           await editMessage(
             chatId,
             placeholder.message_id,
@@ -119,10 +123,19 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       user_id: userCtx.user_id,
       provider,
       prompt,
+      session_id: hotSession?.session_id,
       onEvent,
     });
 
     await flush(true);
+
+    if (provider === "claude" && resolvedSessionId) {
+      await upsertHotSession({
+        telegram_chat_id: chatId,
+        user_id: userCtx.user_id,
+        session_id: resolvedSessionId,
+      });
+    }
 
     if (finalText) {
       await recordOutboundMessage({

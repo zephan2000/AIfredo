@@ -24,7 +24,7 @@ export async function runOnce(
       const result = await runClaude({
         prompt: req.prompt,
         system: req.system,
-        sessionId: req.run_id,
+        resumeSessionId: req.session_id,
         onText,
         onRateLimit: (info) => {
           recordRateLimit(info);
@@ -41,7 +41,12 @@ export async function runOnce(
         cost_usd: result.cost_usd,
       });
       send({ type: "step_complete", run_id: req.run_id, step_idx: 0, output: result.text });
-      send({ type: "done", run_id: req.run_id, final: result.text });
+      send({
+        type: "done",
+        run_id: req.run_id,
+        final: result.text,
+        session_id: result.session_id || undefined,
+      });
     } else {
       const result = await runCodex({
         prompt: req.prompt,

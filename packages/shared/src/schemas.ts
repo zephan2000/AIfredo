@@ -14,6 +14,9 @@ export const RunRequestSchema = z.object({
   scratch_dir: z.string().optional(),
   external_message_id: z.string().optional(),
   external_chat_id: z.string().optional(),
+  // When set, the brain calls `claude --resume <id>` to continue a thread.
+  // Omit for one-shot runs (cron jobs, MCP tool calls).
+  session_id: z.string().uuid().optional(),
 });
 
 export type RunRequest = z.infer<typeof RunRequestSchema>;
@@ -62,6 +65,13 @@ export const BrainStreamEventSchema = z.discriminatedUnion("type", [
       })
       .passthrough(),
   }),
-  z.object({ type: z.literal("done"), run_id: z.string(), final: z.string() }),
+  z.object({
+    type: z.literal("done"),
+    run_id: z.string(),
+    final: z.string(),
+    // The Claude session_id this run was attached to. Web layer persists it
+    // in chat_sessions so the next turn can resume the same thread.
+    session_id: z.string().uuid().optional(),
+  }),
   z.object({ type: z.literal("error"), run_id: z.string(), message: z.string() }),
 ]);

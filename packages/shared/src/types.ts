@@ -112,5 +112,5 @@ export type BrainStreamEvent =
   | { type: "delta"; run_id: string; step_idx: number; text: string }
   | { type: "step_complete"; run_id: string; step_idx: number; output: string }
   | { type: "rate_limit"; run_id: string; info: ClaudeRateLimitInfo }
-  | { type: "done"; run_id: string; final: string }
+  | { type: "done"; run_id: string; final: string; session_id?: string }
   | { type: "error"; run_id: string; message: string };
