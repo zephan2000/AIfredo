@@ -134,7 +134,7 @@ The script is idempotent. If the state bucket already exists, it skips phases 1-
 
 ⚠ **Currency**: the `google_billing_budget` resource omits `currency_code` so it inherits your billing account's currency. Don't hardcode USD if your account is SGD/EUR/etc — the API returns an unhelpful 400.
 
-⚠ **VM `metadata_startup_script` change forces replacement.** Any future edit to [vm-startup.sh.tftpl](../infra/vm-startup.sh.tftpl) destroys the VM and creates a new one. **OAuth credentials are wiped** — you have to re-login. Item #3 in CLAUDE.md is to snapshot creds to Supabase Storage; until then, plan around it.
+⚠ **VM `metadata_startup_script` change forces replacement.** Any future edit to [vm-startup.sh.tftpl](../infra/vm-startup.sh.tftpl) destroys the VM and creates a new one. **First-time deploys lose OAuth on replacement.** After Phase E.5 below, replacements auto-restore creds from the GCS snapshot bucket — no manual re-OAuth.
 
 ### Common Phase-C errors & fixes
 
@@ -211,8 +211,33 @@ jq '{auth_mode, has_api_key: (.OPENAI_API_KEY != null and .OPENAI_API_KEY != "")
 exit                                                       # leaves aifredo shell
 sudo systemctl restart aifredo-brain.service
 curl -s http://localhost:8080/health
-exit                                                       # leaves SSH
 ```
+
+### Phase E.5 — Seed the credential snapshot (DO NOT SKIP)
+
+```sh
+sudo /opt/AIfredo/snapshot-creds.sh                       # uploads first encrypted snapshot to GCS
+exit                                                       # leaves SSH
+gcloud storage ls gs://<PROJECT_ID>-aifredo-creds/        # must list snapshot-latest.tar.gz.enc
+```
+
+⚠ Without this, the auto-snapshot cron only fires every 6h (at 00:00 / 06:00 / 12:00 / 18:00 UTC). If the VM is replaced before the first cron tick, you lose creds and have to redo Phase E.
+
+**How DR works:**
+- TF provisions a private GCS bucket `<PROJECT_ID>-aifredo-creds` (versioned, 10-version retention).
+- TF generates a 48-char `random_password.creds_passphrase` that lives in TF state. It's written to `/opt/AIfredo/creds.key` on every fresh VM.
+- A cron entry at `/etc/cron.d/aifredo-snapshot` runs `/opt/AIfredo/snapshot-creds.sh` every 6h: `tar -czf - .claude/.credentials.json .codex/auth.json | openssl aes-256-cbc -pbkdf2 -pass file:creds.key | curl upload to GCS`.
+- On every VM boot, `vm-startup.sh.tftpl` checks: if both cred files are missing AND a snapshot exists in GCS, decrypt with the same passphrase and untar into `/home/aifredo/`.
+- **The passphrase only survives as long as TF state survives.** If you nuke the state bucket, the snapshot is unrecoverable. The state bucket has `force_destroy = false` and versioning enabled, so this is hard to do accidentally.
+
+**To test DR works:**
+```sh
+cd infra
+tofu taint google_compute_instance.brain
+tofu apply -auto-approve                                  # replaces the VM
+gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --project <PROJECT_ID> -- 'sudo grep -i snapshot /var/log/aifredo-bootstrap.log; curl -s http://localhost:8080/health; echo'
+```
+Expect: `Credentials restored from snapshot.` + healthy `/health` with no manual OAuth.
 
 ⚠ If `auth_mode != "chatgpt"` or `has_api_key=true`, you signed in with API-key billing instead of your ChatGPT Plus subscription. `codex logout && codex login` and pick "Sign in with ChatGPT".
 
@@ -282,7 +307,10 @@ tofu apply -auto-approve
 
 ### VM was replaced and OAuth is gone
 
-Re-run Phase E. ~3 min if nothing else is broken.
+Shouldn't happen post-Phase E.5 — the new VM auto-restores from GCS. If it did happen, check `sudo grep -i snapshot /var/log/aifredo-bootstrap.log` on the VM for clues:
+- `No snapshot found (HTTP 404)` → snapshot bucket was emptied or you skipped Phase E.5. Re-run Phase E + E.5.
+- `No CLI credentials present; checking for snapshot...` but no `restored` line → metadata token fetch failed or decryption failed. Check `sudo /opt/AIfredo/snapshot-creds.sh` runs cleanly first (a working snapshot proves token + key are fine), then taint VM again.
+- `Credentials restored from snapshot.` but brain still 401s → snapshot is stale or corrupted. Force a fresh re-OAuth (Phase E) and re-run Phase E.5.
 
 ### Telegram messages not arriving
 
