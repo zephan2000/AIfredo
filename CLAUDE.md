@@ -77,7 +77,7 @@ docs/self-host.md
 
 1. ~~Expose `telegram_webhook_secret` as a TF output~~ — done 2026-05-13.
 2. Wire **GCP Workload Identity Federation** so `deploy-brain.yml` actually runs (it's dispatch-only and will fail on auth until WIF is set up).
-3. **Encrypted snapshot of VM credentials to Supabase Storage** for DR — bitten once already: the metadata_startup_script field forces VM replacement on any tweak to vm-startup.sh.tftpl, which wipes OAuth and requires a manual re-login.
+3. ~~Encrypted snapshot of VM credentials for DR~~ — done 2026-05-14. GCS bucket `<project>-aifredo-creds`, aes-256-cbc with TF-state passphrase, cron every 6h, restore-on-boot before brain start. Use Supabase Storage instead if porting off GCP.
 4. Stub a `/api/health` route on Vercel that pings brain `/health` and aggregates — useful for uptime checks.
 5. `github_actions_secret` resources emit deprecation warnings (`plaintext_value` → `value`). Mass-rename when convenient; non-blocking.
 6. `packages/shared/package.json` declares `main: ./src/index.ts`. Works in dev (tsx) and brain (compiled then tsx-loaded), but Next.js needed the `.js` suffixes removed from re-exports inside the shared package, and the brain systemd unit needs `node --import tsx` to load the .ts source. Consider building shared properly and pointing `main` at `dist/index.js` if this trips us again.
