@@ -61,9 +61,11 @@ docs/self-host.md
 ## Phase roadmap
 
 - **Phase 0** — scaffold + IaC + Telegram round-trip. ✅ Complete.
-- **Phase 1** — first cron skill (SG news daily via GitHub Actions), credential snapshot/refresh workflow, expose `telegram_webhook_secret` as TF output, wire GCP WIF for `deploy-brain.yml`.
-- **Phase 2** — slide-deck multi-step workflow (Claude strategist → Claude critic → Gemini tighten → Claude prompt-eng → Codex execute, source-of-truth doc versioned in Supabase Storage), MCP OAuth 2.1 issuer real implementation (DCR /register + /authorize + /token + tool dispatch).
-- **Phase 3** — article breakdown (Jina Reader), social-video transcribe (Gemini Flash audio), learn-Chinese port (from github.com/nathoyina/learn-chinese — not yet fetched), web UI.
+- **Phase 1** — first cron skill (SG news daily via GitHub Actions), credential snapshot ✅, GCP WIF for `deploy-brain.yml` ✅, expose `telegram_webhook_secret` as TF output ✅.
+- **Phase 2** — slide-deck multi-step workflow, MCP OAuth 2.1 real impl.
+- **Phase 3** — article breakdown, social-video transcribe, learn-Chinese port, web UI.
+
+**Read [`docs/roadmap.md`](docs/roadmap.md) for the live priority list, rationale behind each item, decisions already made (D-NNN), and explicit non-goals (N-NNN).** This phase list is intentionally terse — `roadmap.md` is the source of truth for "what should we do next and why".
 
 ## Reject these reflexively unless user explicitly asks
 
