@@ -22,25 +22,32 @@ This doc is not a contract. If a decision turns out wrong, edit the entry and ad
 | Phase 0 scaffold + IaC | up to `a69e397` | Whole-architecture skeleton — VM, tunnel, Vercel webhook, Supabase, GH secrets, all OpenTofu. |
 | First real deploy | up to `cacf3e7` | Validated everything end-to-end against real accounts. Surfaced 12+ edge cases now documented in self-host.md. |
 | Encrypted credential snapshot DR | `e28cdd8` | VM replacement (any tweak to startup script) wipes OAuth. Bit us once. GCS snapshot + cron + restore-on-boot makes future replacements zero-touch. |
-| WIF for `deploy-brain.yml` | per `infra/gcp.tf` recent edits | GHA can now SSH to brain without static SA keys. Required before any iteration on brain code can be CI-driven. |
+| WIF for `deploy-brain.yml` | `4c0f6a7` | GHA can now SSH to brain without static SA keys. Required before any iteration on brain code can be CI-driven. |
 | `telegram_webhook_secret` as TF output | within `e28cdd8` cluster | Webhook registration is one command, not a state-pull. |
+| SG news cron (v1, Claude-in-loop) — CNA + Mothership | `28f5863` | First autonomous skill. Validated the GHA → brain → claude → Telegram pipeline for non-prompted flows. Established the cron-skill shape every later skill will copy. Admin UUID seeded via `0004_admin_seed.sql`; dedupe via `cron_seen_urls`. |
+| Per-chat session continuity (`claude --resume`) | `bc33b24` | Decoupled Claude session_id from AIfredo run_id; web persists per-chat session in `chat_sessions` (one "hot" row enforced by partial unique index). Step 1 of the hot/archive/forget lifecycle. |
 
 ## Now (Phase 1, in flight)
 
-### First cron skill — SG news daily (v1, Claude-in-loop)
-
-**What**: GitHub Actions cron at 23:00 UTC → fetch CNA RSS → dedupe via `cron_seen_urls` table → ask Claude to pick top 5 with one-line summaries → Telegram to admin.
-
-**Why it matters**: First real proof that the brain pipeline (Vercel → brain → claude -p → Telegram) works for autonomous (non-prompted) flows. Establishes the pattern every later skill copies.
-
-**Why v1 not v0**: The point of AIfredo is leveraging Pro/Max subscriptions. A deterministic v0 sidesteps the whole thesis. One Claude call/day is rounding error inside subscription quota.
-
-**Open decisions**:
-- Admin user UUID seeding: deterministic via `uuid_generate_v5(namespace, telegram_id::text)` in `supabase/migrations/0004_admin_seed.sql`. Picked over first-message-bootstrap because forkers cloning the repo can run the cron immediately without a hidden manual step.
-
-**Status**: Scoped at file level. Awaiting "go" to implement.
+_Empty — pick next from Soon._
 
 ## Soon (next 1–3 deploys)
+
+### Session lifecycle — `/forget`, `/keep`, `/new` + archive/surfacing crons
+
+**What**: Finish the hot → archive → forgotten flow sketched while building continuity. Steps:
+
+1. Telegram commands `/forget`, `/keep`, `/new` that mutate `chat_sessions.status` for the current chat. (Small — handler in `apps/web/app/api/telegram/route.ts`.)
+2. Archive cron — weekly: scan `chat_sessions where last_used_at > 14d and status = 'hot'`. Move .jsonl into Supabase Storage (or `messages` rows), flip status to `archived`. Silent move.
+3. Surfacing cron — same schedule, post-archive: DM the user the freshly-archived list with `/keep N` / `/forget N` actions.
+4. Forget cron — monthly: scan `archived` rows older than 90d, surface for `/forget` confirmation. Never auto-deletes.
+5. `--resume` failure fallback in the brain runner. Today a missing .jsonl (post-rebuild) throws; should retry without `--resume` and update the chat_sessions row.
+
+**Why it matters**: Continuity without hygiene fills the VM disk and the operator's mental space with stale threads. Surfacing-before-delete is the operator-trust contract.
+
+**Why now**: Continuity just landed; the lifecycle gaps are visible. Also step 5 (fallback) is a concrete known footgun mentioned in the continuity commit message.
+
+**Why piece-wise not all at once**: Step 1 is independently useful (manual cleanup). Steps 2-4 are only needed when there's clutter, which is months away.
 
 ### Skill-as-config refactor
 
