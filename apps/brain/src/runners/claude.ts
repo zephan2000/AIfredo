@@ -25,6 +25,24 @@ export interface ClaudeRunResult {
 const CLAUDE_BIN = process.env.CLAUDE_BIN ?? "claude";
 
 export async function runClaude(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
+  try {
+    return await runClaudeOnce(opts);
+  } catch (err) {
+    if (opts.resumeSessionId) {
+      // Resume target missing (VM rebuild) or otherwise unreplayable. Retry
+      // with a fresh session so the user gets a reply; caller persists the new
+      // session_id and the old one is orphaned for the archive cron to GC.
+      console.warn(
+        `claude --resume ${opts.resumeSessionId} failed; retrying without resume:`,
+        err instanceof Error ? err.message : err,
+      );
+      return await runClaudeOnce({ ...opts, resumeSessionId: undefined });
+    }
+    throw err;
+  }
+}
+
+async function runClaudeOnce(opts: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const args = ["-p", opts.prompt, "--output-format", "stream-json", "--verbose"];
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
   if (opts.system) args.push("--system-prompt", opts.system);
