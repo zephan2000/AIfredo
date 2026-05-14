@@ -239,6 +239,30 @@ gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --projec
 ```
 Expect: `Credentials restored from snapshot.` + healthy `/health` with no manual OAuth.
 
+### Credential lifecycle — what to expect long-term
+
+Both `~/.claude/.credentials.json` and `~/.codex/auth.json` hold short-lived **access_tokens** (hours) and long-lived **refresh_tokens** (weeks, sliding). The CLIs auto-refresh on every invocation — the refreshed token writes back to disk, and the next 6-hour snapshot picks it up.
+
+Under normal Telegram-driven use the CLIs run constantly, so:
+- Refresh tokens never get close to expiry → tokens last indefinitely.
+- Snapshots in GCS always contain a refresh_token that's <6h old.
+- VM replacements auto-restore with a refresh_token still well inside its window.
+
+You will need to **redo Phase E (re-OAuth)** only when one of these happens:
+
+| Trigger | What invalidates |
+|---|---|
+| Brain idle for ~1-2 months (no CLI invocations) | refresh_token times out |
+| You change your Anthropic or OpenAI password | provider revokes derived tokens |
+| You log out from the Claude or ChatGPT "Sessions" / "Connected apps" dashboard | provider revokes derived tokens |
+| Subscription (Claude Pro/Max or ChatGPT Plus) lapses | provider revokes derived tokens |
+| Provider rotates keys after a security event | rare, but possible |
+| You `tofu destroy` and recreate weeks later | snapshot is stale beyond refresh window |
+
+**Symptom of expired creds**: brain logs show `401`, `invalid_grant`, or `token expired` when claude/codex spawn. Telegram replies stop appearing. Fix is always the same — redo Phase E, then `sudo /opt/AIfredo/snapshot-creds.sh` to seed a fresh snapshot.
+
+You don't have to touch this otherwise.
+
 ⚠ If `auth_mode != "chatgpt"` or `has_api_key=true`, you signed in with API-key billing instead of your ChatGPT Plus subscription. `codex logout && codex login` and pick "Sign in with ChatGPT".
 
 ⚠ Newer codex CLI stores tokens at `.tokens.{access_token,refresh_token,id_token,account_id}` (nested), not at the top level.
