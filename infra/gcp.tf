@@ -2,6 +2,8 @@ locals {
   required_apis = [
     "compute.googleapis.com",
     "iam.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "sts.googleapis.com",
     "storage.googleapis.com",
     "iap.googleapis.com",
     "billingbudgets.googleapis.com",
@@ -157,6 +159,7 @@ resource "google_compute_instance" "brain" {
     domain                    = var.domain
     creds_bucket              = google_storage_bucket.creds.name
     creds_passphrase          = random_password.creds_passphrase.result
+    ci_sa_unique_id           = google_service_account.ci_deployer.unique_id
   })
 
   allow_stopping_for_update = true

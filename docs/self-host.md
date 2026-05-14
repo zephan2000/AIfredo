@@ -125,7 +125,7 @@ grep -cE '^\s*[a-z_]+\s*=\s*"redacted"' terraform.tfvars   # MUST print 0
 What it does:
 1. Disables the gcs backend file (`mv backend.tf backend.tf.disabled`) so the state bucket itself can be provisioned with local state
 2. Migrates state to the new GCS bucket
-3. Full apply (VM, tunnel, DNS, Vercel project, Supabase project, GitHub secrets, env vars)
+3. Full apply (VM, tunnel, DNS, Vercel project, Supabase project, GitHub secrets, env vars, GHA Workload Identity Federation)
 4. Applies Supabase migrations
 
 The script is idempotent. If the state bucket already exists, it skips phases 1-2 and inits directly against GCS.
@@ -308,6 +308,23 @@ If silent for >30 s, tail the brain log:
 ```sh
 gcloud compute ssh aifredo-brain --tunnel-through-iap --zone us-west1-a --project <PROJECT_ID> -- 'sudo journalctl -u aifredo-brain.service -n 80 --no-pager'
 ```
+
+---
+
+## Phase H — Verify CI deploys (~2 min)
+
+TF provisioned a Workload Identity pool, OIDC provider, and `aifredo-ci-deployer` SA. Secrets `GCP_WIF_PROVIDER` and `GCP_CI_SERVICE_ACCOUNT` were pushed to the repo. Trigger the workflow once to confirm:
+
+```sh
+gh workflow run deploy-brain.yml
+gh run watch
+```
+
+Expect the auth, SSH, and `/health` steps to all pass. The SA's OS Login user (`sa_<unique_id>`) has a scoped sudoers drop-in installed by [vm-startup.sh.tftpl](../infra/vm-startup.sh.tftpl) — it can only `sudo -u aifredo bash …` and `sudo systemctl restart aifredo-brain.service`.
+
+⚠ If the SSH step fails with `sudo: a password is required`, the sudoers drop-in didn't install. Check `sudo cat /etc/sudoers.d/aifredo-ci` on the VM. If it's missing, look for the `WARNING: CI sudoers drop-in invalid` line in `/var/log/aifredo-bootstrap.log`.
+
+⚠ If the auth step fails with `unable to acquire impersonation credentials`, the WIF binding didn't apply or `attribute_condition` rejects the token. Confirm `assertion.repository` in the token (set `ACTIONS_STEP_DEBUG=true` repo secret to log the OIDC claims) matches `${github_owner}/${github_repo_name}` in tfvars.
 
 ---
 

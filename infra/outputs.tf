@@ -53,3 +53,13 @@ output "creds_bucket" {
   description = "GCS bucket holding encrypted CLI credential snapshots. New VMs restore from here on boot."
   value       = google_storage_bucket.creds.name
 }
+
+output "wif_provider_name" {
+  description = "Full resource name of the GitHub Actions WIF provider. Used as workload_identity_provider in google-github-actions/auth@v2."
+  value       = google_iam_workload_identity_pool_provider.github.name
+}
+
+output "ci_service_account_email" {
+  description = "Email of the SA that GHA tokens impersonate via WIF."
+  value       = google_service_account.ci_deployer.email
+}

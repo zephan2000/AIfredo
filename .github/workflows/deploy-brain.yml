@@ -23,10 +23,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Workload Identity Federation. Setup is a Phase 0+ task — see
-      # docs/self-host.md. Until WIF is wired up this workflow is dispatch-only
-      # and will fail on the auth step; that's fine since cloud-init already
-      # cloned the repo and built brain on first boot.
       - name: Authenticate to GCP (WIF)
         uses: google-github-actions/auth@v2
         with:
@@ -48,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 10); do
-            if curl -fsS "https://brain.${{ secrets.AIFREDO_DOMAIN }}/health" > /dev/null; then
+            if curl -fsS "https://agent.${{ secrets.AIFREDO_DOMAIN }}/health" > /dev/null; then
               echo "healthy"
               exit 0
             fi

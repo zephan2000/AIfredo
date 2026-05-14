@@ -12,6 +12,8 @@ locals {
     TELEGRAM_BOT_TOKEN        = var.telegram_bot_token
     GCP_PROJECT_ID            = var.gcp_project_id
     AIFREDO_DOMAIN            = var.domain
+    GCP_WIF_PROVIDER          = google_iam_workload_identity_pool_provider.github.name
+    GCP_CI_SERVICE_ACCOUNT    = google_service_account.ci_deployer.email
   }
 }
 

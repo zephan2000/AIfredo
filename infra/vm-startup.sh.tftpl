@@ -40,6 +40,24 @@ if ! id aifredo >/dev/null 2>&1; then
   useradd -m -s /bin/bash -d /home/aifredo aifredo
 fi
 
+# --- CI deployer sudoers drop-in (WIF, scoped) ---
+# OS Login maps the CI deployer service account to Linux user sa_<unique_id>.
+# Grant it only the exact privilege the deploy workflow needs: become aifredo
+# (to run git pull + pnpm) and restart the brain unit. Validated with visudo
+# before install — an invalid drop-in breaks sudo system-wide.
+TMPSUDO=$(mktemp)
+cat > "$TMPSUDO" <<SUDOEOF
+sa_${ci_sa_unique_id} ALL=(aifredo) NOPASSWD: /bin/bash, /usr/bin/bash
+sa_${ci_sa_unique_id} ALL=(root) NOPASSWD: /bin/systemctl restart aifredo-brain.service, /usr/bin/systemctl restart aifredo-brain.service
+SUDOEOF
+chmod 0440 "$TMPSUDO"
+if visudo -cf "$TMPSUDO" >/dev/null; then
+  mv "$TMPSUDO" /etc/sudoers.d/aifredo-ci
+else
+  echo "WARNING: CI sudoers drop-in invalid; CI deploys will fail until fixed"
+  rm -f "$TMPSUDO"
+fi
+
 # --- Repo checkout + build ---
 mkdir -p /opt/AIfredo
 chown aifredo:aifredo /opt/AIfredo

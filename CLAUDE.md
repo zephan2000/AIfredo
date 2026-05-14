@@ -76,7 +76,7 @@ docs/self-host.md
 ## Open Phase-0+ items (small follow-ups)
 
 1. ~~Expose `telegram_webhook_secret` as a TF output~~ — done 2026-05-13.
-2. Wire **GCP Workload Identity Federation** so `deploy-brain.yml` actually runs (it's dispatch-only and will fail on auth until WIF is set up).
+2. ~~Wire **GCP Workload Identity Federation** so `deploy-brain.yml` actually runs~~ — done 2026-05-14. Pool `aifredo-gh`, provider `github-actions` (restricted to this repo via `attribute_condition`), SA `aifredo-ci-deployer` with `compute.osLogin` + `iam.serviceAccountUser` on brain SA + instance-scoped `iap.tunnelResourceAccessor`. Sudoers drop-in for `sa_<unique_id>` lets it `sudo -u aifredo bash` and restart the brain unit only.
 3. ~~Encrypted snapshot of VM credentials for DR~~ — done 2026-05-14. GCS bucket `<project>-aifredo-creds`, aes-256-cbc with TF-state passphrase, cron every 6h, restore-on-boot before brain start. Use Supabase Storage instead if porting off GCP.
 4. Stub a `/api/health` route on Vercel that pings brain `/health` and aggregates — useful for uptime checks.
 5. `github_actions_secret` resources emit deprecation warnings (`plaintext_value` → `value`). Mass-rename when convenient; non-blocking.
