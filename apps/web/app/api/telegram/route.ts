@@ -15,6 +15,10 @@ import {
 } from "@/lib/users";
 import { callBrain } from "@/lib/brain";
 import { getHotSession, upsertHotSession } from "@/lib/sessions";
+import {
+  CAPABILITIES_SYSTEM_PROMPT,
+  CAPABILITIES_TEXT,
+} from "@/lib/capabilities";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +60,13 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   } else if (prompt.startsWith("/claude ")) {
     prompt = prompt.slice("/claude ".length);
   } else if (prompt === "/start") {
-    await sendMessage(chatId, "Hi. Send me a message. Prefix with /codex to use Codex.");
+    await sendMessage(
+      chatId,
+      "Hi. Send me a message. Use /info to see what I can do.",
+    );
+    return;
+  } else if (prompt === "/info" || prompt === "/help") {
+    await sendMessage(chatId, CAPABILITIES_TEXT);
     return;
   }
 
@@ -124,6 +134,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       provider,
       prompt,
       session_id: hotSession?.session_id,
+      system: hotSession ? undefined : CAPABILITIES_SYSTEM_PROMPT,
       onEvent,
     });
 

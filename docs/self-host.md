@@ -291,6 +291,18 @@ curl -sX POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
 
 # Confirm
 curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" | jq .
+
+# (Optional) Populate the in-app "/" autocomplete menu. Purely cosmetic —
+# the bot responds to these regardless. Re-run after adding new commands.
+curl -sX POST "https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands" \
+  -H "content-type: application/json" \
+  -d '{"commands":[
+    {"command":"info","description":"What can AIfredo do?"},
+    {"command":"help","description":"Alias for /info"},
+    {"command":"start","description":"Welcome message"},
+    {"command":"codex","description":"Route this message to Codex"},
+    {"command":"claude","description":"Explicit Claude (default)"}
+  ]}' | jq .
 ```
 
 ⚠ Telegram registers the webhook even if your URL returns 404 — there's no upstream check. If you see `pending_update_count > 0` in `getWebhookInfo`, your endpoint isn't responding and messages are buffered.
