@@ -340,6 +340,57 @@ Expect the auth, SSH, and `/health` steps to all pass. The SA's OS Login user (`
 
 ---
 
+## Phase I — Connect Slack (per workspace, no `tofu apply`)
+
+Integration credentials are set through Telegram, not Terraform. Once per fork you create a Slack app; after that, connecting a workspace is three Telegram messages.
+
+### I1. Create the Slack app (one-time, ~5 min)
+
+1. api.slack.com/apps → **Create New App** → **From scratch** → pick your workspace.
+2. **OAuth & Permissions**:
+   - **Redirect URLs** → add `https://<your-vercel-production-domain>/oauth/slack/callback` (the stable project domain, e.g. `https://aifredo-web.vercel.app/oauth/slack/callback` — not a per-deployment preview URL).
+   - **User Token Scopes** (not Bot Token Scopes) → add: `search:read`, `users:read`, `channels:read`, `channels:history`, `groups:read`, `groups:history`, `im:read`, `im:history`, `mpim:read`, `mpim:history`.
+3. **Basic Information** → copy **Client ID** and **Client Secret**.
+
+⚠ Scopes must be under **User** Token Scopes. Bot scopes won't let AIfredo read your DMs/private channels, and the OAuth callback expects `authed_user.access_token`.
+
+⚠ `search.messages` (used by later Slack skills) requires a **paid** Slack workspace. On free-tier workspaces the connection still succeeds and `conversations.history` works; only search is unavailable.
+
+### I2. Connect (in Telegram)
+
+```
+/admin set slack client_id <client-id>
+/admin set slack client_secret <client-secret>
+/connect slack
+```
+
+The bot replies with a one-time link (5-min TTL, single use). Open it → Slack consent screen → **Allow**. The callback page shows "Connected to <workspace> ✓" and the bot DMs a confirmation.
+
+⚠ Delete the two `/admin set` messages from your Telegram history afterward — the secrets sit in your chat log (they are *not* stored in AIfredo's `messages` table; that path is redacted server-side).
+
+⚠ Link expired before you clicked? Just send `/connect slack` again. Tokens are single-use; a second click of an old link returns "Link already used."
+
+### I3. Verify
+
+```sh
+# Negative-path checks (no Slack app needed):
+curl -s -o /dev/null -w "%{http_code}\n" "https://<vercel>/oauth/foo/start"            # 404
+curl -s -o /dev/null -w "%{http_code}\n" "https://<vercel>/oauth/slack/start"           # 400
+curl -s -o /dev/null -w "%{http_code}\n" "https://<vercel>/oauth/slack/start?token=x"   # 401
+```
+
+After a real `/connect slack`, confirm the row landed encrypted:
+
+```sh
+# via Supabase REST with the service-role key
+curl -s "$SUPABASE_URL/rest/v1/user_integrations?provider=eq.slack&select=external_account_id,scopes,status,encrypted_tokens" \
+  -H "apikey: $KEY" -H "authorization: Bearer $KEY" | jq '.[0] | {external_account_id, status, scope_count:(.scopes|length), tokens_encrypted:(.encrypted_tokens|test("xoxp")|not)}'
+```
+
+Expect `status:"active"`, a non-zero `scope_count`, and `tokens_encrypted:true`.
+
+---
+
 ## Recovery scenarios
 
 ### State got overwritten in the GCS backend (you answered `yes` to the migration prompt)

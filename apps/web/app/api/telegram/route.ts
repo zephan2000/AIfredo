@@ -19,7 +19,8 @@ import {
   CAPABILITIES_SYSTEM_PROMPT,
   CAPABILITIES_TEXT,
 } from "@/lib/capabilities";
-import { listAdminConfig, setAdminConfig } from "@/lib/admin-config";
+import { getAdminConfig, listAdminConfig, setAdminConfig } from "@/lib/admin-config";
+import { createPending } from "@/lib/oauth-pending";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,6 +79,38 @@ async function handleAdminCommand(args: string): Promise<string> {
   return "Unknown /admin command. Try: /admin set <provider> <key> <value> or /admin show <provider>.";
 }
 
+async function handleConnectCommand(
+  prompt: string,
+  userId: string,
+): Promise<string> {
+  const provider = prompt.trim().split(/\s+/)[1];
+  if (!provider) return "Usage: /connect <provider> (supported: slack)";
+  if (provider !== "slack") {
+    return `Unsupported provider: ${provider}. Supported: slack.`;
+  }
+
+  const clientId = await getAdminConfig("slack", "client_id");
+  if (!clientId) {
+    return [
+      "Slack client_id not set yet. First run:",
+      "/admin set slack client_id <id>",
+      "/admin set slack client_secret <secret>",
+      "then /connect slack again.",
+    ].join("\n");
+  }
+
+  const base = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (!base) {
+    return "⚠️ Server misconfigured: VERCEL_PROJECT_PRODUCTION_URL is unset.";
+  }
+
+  const token = await createPending({ user_id: userId, provider: "slack" });
+  return [
+    "Connect Slack (link valid 5 minutes, single use):",
+    `https://${base}/oauth/slack/start?token=${token}`,
+  ].join("\n");
+}
+
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
@@ -101,6 +134,15 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
     return;
   } else if (prompt.startsWith("/admin ") || prompt === "/admin") {
     const reply = await handleAdminCommand(prompt.replace(/^\/admin\s*/, ""));
+    await sendMessage(chatId, reply);
+    return;
+  } else if (prompt.startsWith("/connect ") || prompt === "/connect") {
+    const userCtx = await ensureUserFromTelegram(
+      msg.from.id,
+      chatId,
+      msg.from.username ?? msg.from.first_name,
+    );
+    const reply = await handleConnectCommand(prompt, userCtx.user_id);
     await sendMessage(chatId, reply);
     return;
   }

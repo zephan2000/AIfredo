@@ -28,8 +28,9 @@ Commands:
 /claude <msg>  — explicit Claude (default)
 /admin set <provider> <key> <value>  — store integration config (e.g. Slack creds)
 /admin show <provider>  — list which config keys are set
+/connect <provider>  — connect a third-party account (supported: slack)
 
-Coming soon: /connect <provider> (Slack OAuth flow), /forget, /keep, /new.
+Coming soon: /forget, /keep, /new for managing chat history.
 
 Source: github.com/zephan2000/AIfredo`;
 
@@ -42,8 +43,11 @@ Your operator can use these commands at any time:
 - /codex <msg> — route the next message to Codex instead of you
 - /admin set <provider> <key> <value> — store integration config (e.g. Slack client_id)
 - /admin show <provider> — list configured keys
-- /connect <provider> — start OAuth flow (planned, not yet active)
+- /connect <provider> — connect a third-party account via OAuth (supported: slack)
 - /forget, /keep, /new — manage chat history (planned, not yet active)
+
+If the operator has connected Slack, you'll be able to read and search their Slack
+messages once that tooling lands; for now, connecting just stores the credentials.
 
 You have web access: WebFetch for specific URLs the operator pastes, WebSearch for "find me X" requests. Use them freely without asking permission.
 

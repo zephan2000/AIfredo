@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { getServerSupabase } from "./supabase";
 
 export interface PendingRow {
@@ -10,6 +11,26 @@ export interface PendingRow {
 }
 
 const COLS = "token, user_id, provider, state, expires_at, consumed_at";
+
+export async function createPending(args: {
+  user_id: string;
+  provider: string;
+  ttlSeconds?: number;
+}): Promise<string> {
+  const supabase = getServerSupabase();
+  const token = randomBytes(32).toString("base64url");
+  const expires_at = new Date(
+    Date.now() + (args.ttlSeconds ?? 300) * 1000,
+  ).toISOString();
+  const { error } = await supabase.from("oauth_pending").insert({
+    token,
+    user_id: args.user_id,
+    provider: args.provider,
+    expires_at,
+  });
+  if (error) throw new Error(`createPending: ${error.message}`);
+  return token;
+}
 
 export async function findByToken(token: string): Promise<PendingRow | null> {
   const supabase = getServerSupabase();
