@@ -119,14 +119,33 @@ cat > /etc/cron.d/aifredo-snapshot <<'CRONEOF'
 0 */6 * * * root /opt/AIfredo/snapshot-creds.sh >> /var/log/aifredo-snapshot.log 2>&1
 CRONEOF
 
+# --- Let the brain (runs as aifredo) trigger a snapshot after each CLI run ---
+# Scoped sudoers: aifredo may run only this one root script, no args. The
+# script stays root-owned 750 so aifredo can't modify it. Validated before
+# install — a broken drop-in disables sudo system-wide.
+TMPSNAPSUDO=$(mktemp)
+echo 'aifredo ALL=(root) NOPASSWD: /opt/AIfredo/snapshot-creds.sh' > "$TMPSNAPSUDO"
+chmod 0440 "$TMPSNAPSUDO"
+if visudo -cf "$TMPSNAPSUDO" >/dev/null; then
+  mv "$TMPSNAPSUDO" /etc/sudoers.d/aifredo-snapshot
+else
+  echo "WARNING: aifredo-snapshot sudoers drop-in invalid; post-run snapshots disabled"
+  rm -f "$TMPSNAPSUDO"
+fi
+
 # --- Restore CLI credentials from snapshot on fresh VM ---
+# xtrace is suppressed across this block: the metadata SA access token and the
+# Authorization: Bearer header would otherwise be written in cleartext to
+# /var/log/aifredo-bootstrap.log (the script runs under `set -x`).
 if [[ ! -f /home/aifredo/.claude/.credentials.json && ! -f /home/aifredo/.codex/auth.json ]]; then
   echo "No CLI credentials present; checking for snapshot in gs://${creds_bucket}..."
+  set +x
   RESTORE_TOKEN=$(curl -fsSH "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token || echo "")
   if [[ -n "$RESTORE_TOKEN" ]]; then
     STATUS=$(curl -sS -o /tmp/snap.enc -w "%%{http_code}" \
       "https://storage.googleapis.com/storage/v1/b/${creds_bucket}/o/snapshot-latest.tar.gz.enc?alt=media" \
       -H "Authorization: Bearer $RESTORE_TOKEN" || echo "fail")
+    unset RESTORE_TOKEN
     if [[ "$STATUS" == "200" && -s /tmp/snap.enc ]]; then
       mkdir -p /home/aifredo/.claude /home/aifredo/.codex
       openssl enc -aes-256-cbc -d -pbkdf2 -pass file:/opt/AIfredo/creds.key -in /tmp/snap.enc \
@@ -140,6 +159,7 @@ if [[ ! -f /home/aifredo/.claude/.credentials.json && ! -f /home/aifredo/.codex/
     fi
     rm -f /tmp/snap.enc
   fi
+  set -x
 fi
 
 # --- systemd: cloudflared tunnel ---

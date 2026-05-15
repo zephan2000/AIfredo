@@ -3,6 +3,7 @@ import { runClaude } from "./runners/claude.js";
 import { runCodex } from "./runners/codex.js";
 import { canUseClaude, recordRateLimit } from "./quota.js";
 import * as memory from "./memory.js";
+import { snapshotCredsAfterRun } from "./snapshot.js";
 
 export async function runOnce(
   req: RunRequest,
@@ -67,6 +68,10 @@ export async function runOnce(
     }
 
     await memory.markRunDone(req.run_id);
+
+    // A successful run rotated the CLI refresh token; capture it to GCS
+    // before the next VM replacement can restore a spent one.
+    snapshotCredsAfterRun();
   } catch (err) {
     await memory.markRunFailed(req.run_id);
     throw err;
