@@ -45,7 +45,11 @@ export async function POST(req: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true });
   }
 
-  waitUntil(handleUpdate(update));
+  // Telegram always calls the registered (production) webhook URL, so the
+  // request origin is the correct, stable base for building OAuth links.
+  const baseUrl = new URL(req.url).origin;
+
+  waitUntil(handleUpdate(update, baseUrl));
   return NextResponse.json({ ok: true });
 }
 
@@ -82,6 +86,7 @@ async function handleAdminCommand(args: string): Promise<string> {
 async function handleConnectCommand(
   prompt: string,
   userId: string,
+  baseUrl: string,
 ): Promise<string> {
   const provider = prompt.trim().split(/\s+/)[1];
   if (!provider) return "Usage: /connect <provider> (supported: slack)";
@@ -99,19 +104,17 @@ async function handleConnectCommand(
     ].join("\n");
   }
 
-  const base = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  if (!base) {
-    return "⚠️ Server misconfigured: VERCEL_PROJECT_PRODUCTION_URL is unset.";
-  }
-
   const token = await createPending({ user_id: userId, provider: "slack" });
   return [
     "Connect Slack (link valid 5 minutes, single use):",
-    `https://${base}/oauth/slack/start?token=${token}`,
+    `${baseUrl}/oauth/slack/start?token=${token}`,
   ].join("\n");
 }
 
-async function handleUpdate(update: TelegramUpdate): Promise<void> {
+async function handleUpdate(
+  update: TelegramUpdate,
+  baseUrl: string,
+): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
   const chatId = msg.chat.id;
@@ -142,7 +145,7 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       chatId,
       msg.from.username ?? msg.from.first_name,
     );
-    const reply = await handleConnectCommand(prompt, userCtx.user_id);
+    const reply = await handleConnectCommand(prompt, userCtx.user_id, baseUrl);
     await sendMessage(chatId, reply);
     return;
   }
