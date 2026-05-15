@@ -26,8 +26,10 @@ Commands:
 /help   — alias for /info
 /codex <msg>   — route this message to Codex
 /claude <msg>  — explicit Claude (default)
+/admin set <provider> <key> <value>  — store integration config (e.g. Slack creds)
+/admin show <provider>  — list which config keys are set
 
-Coming soon: /forget, /keep, /new for managing chat history.
+Coming soon: /connect <provider> (Slack OAuth flow), /forget, /keep, /new.
 
 Source: github.com/zephan2000/AIfredo`;
 
@@ -38,6 +40,9 @@ You have memory of this conversation thread — new turns from the same Telegram
 Your operator can use these commands at any time:
 - /info or /help — show AIfredo's capabilities
 - /codex <msg> — route the next message to Codex instead of you
+- /admin set <provider> <key> <value> — store integration config (e.g. Slack client_id)
+- /admin show <provider> — list configured keys
+- /connect <provider> — start OAuth flow (planned, not yet active)
 - /forget, /keep, /new — manage chat history (planned, not yet active)
 
 You have web access: WebFetch for specific URLs the operator pastes, WebSearch for "find me X" requests. Use them freely without asking permission.

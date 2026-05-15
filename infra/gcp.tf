@@ -84,6 +84,15 @@ resource "random_password" "creds_passphrase" {
   special = false
 }
 
+# 32-byte AES-256-GCM key for encrypting third-party integration tokens
+# (Slack/Gmail/etc.) and admin_config secrets at rest in Supabase. Same key
+# distributed to brain VM (via .env) and Vercel (via env var) — both consume
+# via `packages/shared/src/crypto.ts`. Rotation invalidates all encrypted rows;
+# recovery is re-OAuth + re-set admin_config.
+resource "random_id" "integration_token_key" {
+  byte_length = 32
+}
+
 # --- Credential snapshot bucket (encrypted; survives VM replacement) ---
 resource "google_storage_bucket" "creds" {
   name                        = "${var.gcp_project_id}-aifredo-creds"
@@ -160,6 +169,7 @@ resource "google_compute_instance" "brain" {
     creds_bucket              = google_storage_bucket.creds.name
     creds_passphrase          = random_password.creds_passphrase.result
     ci_sa_unique_id           = google_service_account.ci_deployer.unique_id
+    integration_token_key     = random_id.integration_token_key.b64_std
   })
 
   allow_stopping_for_update = true

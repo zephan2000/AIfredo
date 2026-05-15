@@ -19,6 +19,7 @@ import {
   CAPABILITIES_SYSTEM_PROMPT,
   CAPABILITIES_TEXT,
 } from "@/lib/capabilities";
+import { listAdminConfig, setAdminConfig } from "@/lib/admin-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +48,36 @@ export async function POST(req: Request): Promise<NextResponse> {
   return NextResponse.json({ ok: true });
 }
 
+async function handleAdminCommand(args: string): Promise<string> {
+  const parts = args.trim().split(/\s+/).filter(Boolean);
+  const sub = parts[0];
+
+  if (sub === "set") {
+    const provider = parts[1];
+    const key = parts[2];
+    const value = parts.slice(3).join(" ");
+    if (!provider || !key || !value) {
+      return "Usage: /admin set <provider> <key> <value>";
+    }
+    try {
+      await setAdminConfig(provider, key, value);
+      return `Saved ${provider}.${key}. Tip: delete the message above — Telegram keeps it in your history.`;
+    } catch (err) {
+      return `⚠️ ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  if (sub === "show") {
+    const provider = parts[1];
+    if (!provider) return "Usage: /admin show <provider>";
+    const keys = await listAdminConfig(provider);
+    if (keys.length === 0) return `No config set for ${provider}.`;
+    return `${provider}:\n` + keys.map((k) => `• ${k} ✓`).join("\n");
+  }
+
+  return "Unknown /admin command. Try: /admin set <provider> <key> <value> or /admin show <provider>.";
+}
+
 async function handleUpdate(update: TelegramUpdate): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
@@ -68,6 +99,10 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   } else if (prompt === "/info" || prompt === "/help") {
     await sendMessage(chatId, CAPABILITIES_TEXT);
     return;
+  } else if (prompt.startsWith("/admin ") || prompt === "/admin") {
+    const reply = await handleAdminCommand(prompt.replace(/^\/admin\s*/, ""));
+    await sendMessage(chatId, reply);
+    return;
   }
 
   try {
@@ -77,11 +112,13 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
       msg.from.username ?? msg.from.first_name,
     );
 
+    // Don't store /admin set ... in messages — the value is a secret.
+    const isAdminSet = msg.text.startsWith("/admin set ");
     await recordInboundMessage({
       user_id: userCtx.user_id,
       chat_id: chatId,
       message_id: msg.message_id,
-      text: msg.text,
+      text: isAdminSet ? "/admin set <redacted>" : msg.text,
     });
 
     const placeholder = await sendMessage(chatId, "Working…");

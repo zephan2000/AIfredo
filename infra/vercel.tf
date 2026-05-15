@@ -48,6 +48,11 @@ locals {
       sensitive = false
       target    = ["production", "preview", "development"]
     }
+    INTEGRATION_TOKEN_KEY = {
+      value     = random_id.integration_token_key.b64_std
+      sensitive = true
+      target    = ["production", "preview"]
+    }
   }
 }
 
