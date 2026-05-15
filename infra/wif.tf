@@ -62,10 +62,19 @@ resource "google_service_account_iam_member" "ci_deployer_uses_brain_sa" {
 }
 
 # IAP TCP forwarding, scoped to the single brain instance.
+# `instance` references by name (stable across replacement) but the underlying
+# GCP IAM binding evaluates against the instance ID. When the VM is replaced
+# (any vm-startup.sh.tftpl change), TF sees no diff here but the binding is
+# orphaned. replace_triggered_by forces TF to recreate the binding whenever
+# the instance ID changes.
 resource "google_iap_tunnel_instance_iam_member" "ci_deployer_tunnel" {
   project  = var.gcp_project_id
   zone     = google_compute_instance.brain.zone
   instance = google_compute_instance.brain.name
   role     = "roles/iap.tunnelResourceAccessor"
   member   = "serviceAccount:${google_service_account.ci_deployer.email}"
+
+  lifecycle {
+    replace_triggered_by = [google_compute_instance.brain.id]
+  }
 }
