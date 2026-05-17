@@ -4,7 +4,13 @@ export interface RSSItem {
   title: string;
   url: string;
   publishedAt: string | null;
+  // Plain-text lede from <description>/<content:encoded>, HTML-stripped and
+  // capped. Lets the digest summarise the actual article, not just the
+  // headline. Paywalled posts (some Substacks) yield only their teaser here.
+  snippet: string;
 }
+
+const SNIPPET_MAX = 400;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -28,9 +34,42 @@ export async function fetchRSS(url: string): Promise<RSSItem[]> {
       const title = extractText(item.title);
       const link = extractText(item.link);
       const pub = typeof item.pubDate === "string" ? item.pubDate : null;
-      return { title: title.trim(), url: link.trim(), publishedAt: pub };
+      const rawBody =
+        extractText(item["content:encoded"]) || extractText(item.description);
+      return {
+        title: title.trim(),
+        url: link.trim(),
+        publishedAt: pub,
+        snippet: toSnippet(rawBody),
+      };
     })
     .filter((i) => i.title && i.url);
+}
+
+function toSnippet(html: string): string {
+  const text = html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(?:nbsp|#160);/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&(?:quot|#34);/g, '"')
+    .replace(/&(?:#39|apos);/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => safeCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => safeCodePoint(parseInt(d, 10)))
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > SNIPPET_MAX
+    ? text.slice(0, SNIPPET_MAX).trimEnd() + "…"
+    : text;
+}
+
+function safeCodePoint(n: number): string {
+  try {
+    return Number.isFinite(n) ? String.fromCodePoint(n) : "";
+  } catch {
+    return "";
+  }
 }
 
 function extractText(value: unknown): string {
