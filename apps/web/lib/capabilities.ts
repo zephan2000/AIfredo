@@ -29,6 +29,11 @@ Commands:
 /admin set <provider> <key> <value>  — store integration config (e.g. Slack creds)
 /admin show <provider>  — list which config keys are set
 /connect <provider>  — connect a third-party account (supported: slack)
+/digest list  — your Slack digest groups
+/digest new <name> #a #b  — create a scoped digest group
+/digest scope <name> #a #b  — set channels (or: all)
+/digest ignore <name> #x  — exclude channels (or: none)
+/digest run <name>  — preview a digest now
 
 Coming soon: /forget, /keep, /new for managing chat history.
 

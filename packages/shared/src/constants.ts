@@ -7,6 +7,7 @@ export const RUN_KINDS = {
   CRON_NEWS_SG: "cron.news.sg",
   CRON_NEWS_DOMAIN: "cron.news.domain",
   CRON_VERSE: "cron.verse",
+  CRON_SLACK_DAILY: "cron.slack.daily",
 } as const;
 
 export type RunKind = (typeof RUN_KINDS)[keyof typeof RUN_KINDS];

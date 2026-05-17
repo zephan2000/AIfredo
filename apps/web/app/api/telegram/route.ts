@@ -13,7 +13,15 @@ import {
   recordInboundMessage,
   recordOutboundMessage,
 } from "@/lib/users";
-import { callBrain } from "@/lib/brain";
+import { callBrain, fetchSlackDigest } from "@/lib/brain";
+import {
+  deleteDigest,
+  ensureDefault,
+  getDigest,
+  listDigests,
+  upsertDigest,
+} from "@/lib/slack-digests";
+import { buildSlackDigestPrompt } from "@aifredo/shared";
 import { getHotSession, upsertHotSession } from "@/lib/sessions";
 import {
   CAPABILITIES_SYSTEM_PROMPT,
@@ -111,6 +119,147 @@ async function handleConnectCommand(
   ].join("\n");
 }
 
+const DIGEST_USAGE = [
+  "Slack digests:",
+  "/digest list",
+  "/digest new <name> #a #b",
+  "/digest scope <name> #a #b   (or: all)",
+  "/digest ignore <name> #x     (or: none)",
+  "/digest run <name>",
+  "/digest delete <name>",
+].join("\n");
+
+async function runDigest(
+  userId: string,
+  chatId: number,
+  groupName: string,
+): Promise<void> {
+  const group =
+    groupName === "default"
+      ? await ensureDefault(userId)
+      : await getDigest(userId, groupName);
+  if (!group) {
+    await sendMessage(chatId, `No digest group "${groupName}". /digest list`);
+    return;
+  }
+  const placeholder = await sendMessage(chatId, `Building "${group.name}" digest…`);
+  try {
+    const data = await fetchSlackDigest({
+      user_id: userId,
+      include: group.include_channels,
+      exclude: group.exclude_channels,
+      since_hours: 24,
+    });
+    if (data.channels.length === 0) {
+      await editMessage(
+        chatId,
+        placeholder.message_id,
+        `Nothing in the last 24h for "${group.name}".` +
+          (data.unresolved.length
+            ? ` Unresolved: ${data.unresolved.map((u) => `#${u}`).join(", ")}`
+            : ""),
+      );
+      return;
+    }
+    const prompt = buildSlackDigestPrompt(group.name, data.channels, data.unresolved);
+    const runId = await createRun({
+      user_id: userId,
+      kind: RUN_KINDS.CRON_SLACK_DAILY,
+    });
+    let final = "";
+    await callBrain({
+      run_id: runId,
+      user_id: userId,
+      provider: "claude",
+      prompt,
+      onEvent: (e: BrainStreamEvent) => {
+        if (e.type === "done") final = e.final;
+        else if (e.type === "error") final = `⚠️ ${e.message}`;
+      },
+    });
+    await editMessage(
+      chatId,
+      placeholder.message_id,
+      final.trim() || "(empty digest)",
+    );
+  } catch (err) {
+    await editMessage(
+      chatId,
+      placeholder.message_id,
+      `⚠️ digest failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+async function handleDigestCommand(
+  prompt: string,
+  userId: string,
+  chatId: number,
+): Promise<void> {
+  const parts = prompt.trim().split(/\s+/).filter(Boolean);
+  const sub = parts[1];
+  const name = parts[2];
+  const rest = parts.slice(3);
+
+  if (!sub || sub === "list") {
+    await ensureDefault(userId);
+    const groups = await listDigests(userId);
+    const lines = groups.map((g) => {
+      const scope = g.include_channels.length
+        ? g.include_channels.map((c) => `#${c}`).join(" ")
+        : "all member channels";
+      const ex = g.exclude_channels.length
+        ? ` — ignoring ${g.exclude_channels.map((c) => `#${c}`).join(" ")}`
+        : "";
+      return `• ${g.name}: ${scope}${ex}`;
+    });
+    await sendMessage(chatId, "Digest groups:\n" + lines.join("\n"));
+    return;
+  }
+
+  if (sub === "run") {
+    await runDigest(userId, chatId, name ?? "default");
+    return;
+  }
+
+  if (sub === "delete") {
+    if (!name) return void (await sendMessage(chatId, DIGEST_USAGE));
+    const ok = await deleteDigest(userId, name);
+    await sendMessage(
+      chatId,
+      ok ? `Deleted "${name}".` : `No group "${name}".`,
+    );
+    return;
+  }
+
+  if (sub === "new" || sub === "scope" || sub === "ignore") {
+    if (!name) return void (await sendMessage(chatId, DIGEST_USAGE));
+    const chans =
+      rest.length === 1 && (rest[0] === "all" || rest[0] === "none")
+        ? []
+        : rest;
+    try {
+      if (sub === "ignore") {
+        await upsertDigest(userId, name, { exclude: chans });
+      } else {
+        await upsertDigest(userId, name, { include: chans });
+      }
+      await sendMessage(
+        chatId,
+        `Saved "${name}". /digest run ${name} to preview.`,
+      );
+    } catch (err) {
+      await sendMessage(
+        chatId,
+        `⚠️ ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return;
+  }
+
+  await sendMessage(chatId, DIGEST_USAGE);
+}
+
 async function handleUpdate(
   update: TelegramUpdate,
   baseUrl: string,
@@ -147,6 +296,14 @@ async function handleUpdate(
     );
     const reply = await handleConnectCommand(prompt, userCtx.user_id, baseUrl);
     await sendMessage(chatId, reply);
+    return;
+  } else if (prompt.startsWith("/digest") ) {
+    const userCtx = await ensureUserFromTelegram(
+      msg.from.id,
+      chatId,
+      msg.from.username ?? msg.from.first_name,
+    );
+    await handleDigestCommand(prompt, userCtx.user_id, chatId);
     return;
   }
 
