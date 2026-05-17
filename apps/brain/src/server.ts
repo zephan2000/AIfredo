@@ -4,6 +4,7 @@ import { BRAIN_PORT, RunRequestSchema } from "@aifredo/shared";
 import type { BrainStreamEvent } from "@aifredo/shared";
 import { runOnce } from "./router.js";
 import { getLastRateLimit } from "./quota.js";
+import { buildChannelDigest } from "./tools/slack.js";
 
 const BEARER = process.env.BRAIN_BEARER_TOKEN;
 if (!BEARER) throw new Error("BRAIN_BEARER_TOKEN must be set");
@@ -65,6 +66,33 @@ app.post("/run", async (c) => {
       connection: "keep-alive",
     },
   });
+});
+
+app.post("/tools/slack/digest", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as {
+    user_id?: string;
+    include?: string[];
+    exclude?: string[];
+    since_hours?: number;
+    external_account_id?: string;
+  } | null;
+  if (!body?.user_id) {
+    return c.json({ error: "user_id required" }, 400);
+  }
+  try {
+    const digest = await buildChannelDigest(body.user_id, {
+      include: body.include,
+      exclude: body.exclude,
+      sinceHours: body.since_hours ?? 24,
+      externalAccountId: body.external_account_id,
+    });
+    return c.json(digest);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      502,
+    );
+  }
 });
 
 const port = Number(process.env.PORT ?? BRAIN_PORT);
