@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "news-sg": "tsx src/news-sg.ts",
+    "slack-daily": "tsx src/slack-daily.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
