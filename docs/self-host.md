@@ -227,7 +227,8 @@ gcloud storage ls gs://<PROJECT_ID>-aifredo-creds/        # must list snapshot-l
 - TF provisions a private GCS bucket `<PROJECT_ID>-aifredo-creds` (versioned, 10-version retention).
 - TF generates a 48-char `random_password.creds_passphrase` that lives in TF state. It's written to `/opt/AIfredo/creds.key` on every fresh VM.
 - A cron entry at `/etc/cron.d/aifredo-snapshot` runs `/opt/AIfredo/snapshot-creds.sh` every 6h: `tar -czf - .claude/.credentials.json .codex/auth.json | openssl aes-256-cbc -pbkdf2 -pass file:creds.key | curl upload to GCS`.
-- On every VM boot, `vm-startup.sh.tftpl` checks: if both cred files are missing AND a snapshot exists in GCS, decrypt with the same passphrase and untar into `/home/aifredo/`.
+- **Additionally** (commit `148c0da`) the brain fires the same script after every successful run via a scoped sudoers drop-in (`/etc/sudoers.d/aifredo-snapshot`: `aifredo ALL=(root) NOPASSWD: /opt/AIfredo/snapshot-creds.sh`). This is the primary freshness mechanism; the 6h cron is just the idle floor. See "Credential lifecycle" below for why.
+- On every VM boot, `vm-startup.sh.tftpl` checks: if both cred files are missing AND a snapshot exists in GCS, decrypt with the same passphrase and untar into `/home/aifredo/`. The metadata-token fetch in that block runs under `set +x` so the SA bearer token is not written to `/var/log/aifredo-bootstrap.log` (it was, before `148c0da`).
 - **The passphrase only survives as long as TF state survives.** If you nuke the state bucket, the snapshot is unrecoverable. The state bucket has `force_destroy = false` and versioning enabled, so this is hard to do accidentally.
 
 **To test DR works:**
@@ -241,27 +242,38 @@ Expect: `Credentials restored from snapshot.` + healthy `/health` with no manual
 
 ### Credential lifecycle — what to expect long-term
 
-Both `~/.claude/.credentials.json` and `~/.codex/auth.json` hold short-lived **access_tokens** (hours) and long-lived **refresh_tokens** (weeks, sliding). The CLIs auto-refresh on every invocation — the refreshed token writes back to disk, and the next 6-hour snapshot picks it up.
+Both `~/.claude/.credentials.json` and `~/.codex/auth.json` hold a short-lived **access_token** (hours) and a longer-lived **refresh_token**.
 
-Under normal Telegram-driven use the CLIs run constantly, so:
-- Refresh tokens never get close to expiry → tokens last indefinitely.
-- Snapshots in GCS always contain a refresh_token that's <6h old.
-- VM replacements auto-restore with a refresh_token still well inside its window.
+**Refresh & rotation mechanics (learned the hard way — read this).**
 
-You will need to **redo Phase E (re-OAuth)** only when one of these happens:
+- A CLI run does **not** refresh on every invocation. While the access_token is still valid it's used directly and **nothing on disk changes**. You can run Claude many times in that window with zero token churn.
+- Only when the access_token has expired does a run exchange the refresh_token for a new one. **That exchange rotates the refresh_token: the old one is invalidated immediately (single-use rotating refresh tokens).** A snapshot taken before the rotation now holds a *spent, dead* token.
+- Net failure mode (the one that bit us repeatedly): snapshot captures refresh_token RT1 → a later run crosses access-token expiry and rotates RT1→RT2 (RT1 now dead) → VM is replaced → restore pulls the snapshot with RT1 → **`401 Invalid authentication credentials`**. The restore *plumbing* is fine; the snapshot *content* is stale.
+
+**Hardening in place (commit `148c0da`).** After every successful brain run, `apps/brain/src/snapshot.ts` fires `sudo /opt/AIfredo/snapshot-creds.sh` (immediate; 30s trailing coalesce so a rapid chat doesn't stack uploads). The GCS snapshot is therefore never more than ~30s behind the live token. The 6h cron (`/etc/cron.d/aifredo-snapshot`) remains the floor for idle periods (no runs ⇒ no rotation ⇒ snapshot stays valid). This makes the failure mode above effectively impossible under normal operation.
+
+**Hard rule for any manual re-OAuth.** `claude login` / `codex login` write **only to the VM's local disk**. `snapshot-creds.sh` is what puts creds in **GCS**. `tofu apply` (VM replace) restores **from GCS**. Therefore:
+
+> After *any* manual `claude login` / `codex login`, run `sudo /opt/AIfredo/snapshot-creds.sh` **before** any `tofu apply` that could replace the VM. Re-OAuth without a follow-up snapshot guarantees the next VM replace restores the pre-re-OAuth (now revoked) token and 401s. We hit this 4× before adding the hardening; the rule still matters for deliberate replaces because a manual login is a rotation the auto-snapshot hasn't captured yet.
+
+Verify a snapshot is fresh by its GCS object generation (a µs-epoch timestamp): `gcloud storage objects describe gs://<PROJECT_ID>-aifredo-creds/snapshot-latest.tar.gz.enc --format=json | jq .generation` — divide by 1e6 for the Unix seconds it was written.
+
+**What the snapshot does *not* contain.** Only `.claude/.credentials.json` + `.codex/auth.json`. **Not** Claude's session transcripts (`~/.claude/projects/**/*.jsonl`). So a VM replacement preserves *auth* but loses *chat continuity* — the `--resume` fallback (commit `392464a`) catches the missing session and silently starts a fresh one (graceful, no error). Cross-replacement continuity is the deliberately-deferred archive-to-Supabase work, not a snapshot concern.
+
+You will still need to **redo Phase E (re-OAuth)** when one of these happens:
 
 | Trigger | What invalidates |
 |---|---|
-| Brain idle for ~1-2 months (no CLI invocations) | refresh_token times out |
+| Brain idle for ~1-2 months (no CLI invocations) | refresh_token times out from disuse |
 | You change your Anthropic or OpenAI password | provider revokes derived tokens |
 | You log out from the Claude or ChatGPT "Sessions" / "Connected apps" dashboard | provider revokes derived tokens |
 | Subscription (Claude Pro/Max or ChatGPT Plus) lapses | provider revokes derived tokens |
 | Provider rotates keys after a security event | rare, but possible |
 | You `tofu destroy` and recreate weeks later | snapshot is stale beyond refresh window |
 
-**Symptom of expired creds**: brain logs show `401`, `invalid_grant`, or `token expired` when claude/codex spawn. Telegram replies stop appearing. Fix is always the same — redo Phase E, then `sudo /opt/AIfredo/snapshot-creds.sh` to seed a fresh snapshot.
+**Symptom of expired creds**: brain logs / a direct `sudo -u aifredo claude -p "ok" --output-format json` show `api_error_status: 401` / `Invalid authentication credentials`. Telegram replies stop. Fix is always: redo Phase E, then **immediately** `sudo /opt/AIfredo/snapshot-creds.sh` to seed a fresh snapshot, then verify the GCS generation advanced before any VM replace.
 
-You don't have to touch this otherwise.
+You don't have to touch this otherwise — the post-run snapshot keeps GCS current automatically.
 
 ⚠ If `auth_mode != "chatgpt"` or `has_api_key=true`, you signed in with API-key billing instead of your ChatGPT Plus subscription. `codex logout && codex login` and pick "Sign in with ChatGPT".
 
