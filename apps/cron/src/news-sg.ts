@@ -10,30 +10,65 @@ import { sendMessage } from "./telegram.js";
 const ADMIN_USER_UUID = "e6f02d30-ef47-4c54-b754-8dd5b5eae6e9";
 
 interface Feed {
-  kind: string;
-  source: string;
+  kind: string; // dedupe discriminator (cron_seen_urls.kind)
+  source: string; // human source label
+  category: string; // digest section heading
   url: string;
-  maxCandidates: number;
+  maxCandidates: number; // fetch cap into the candidate pool
+  pick: number; // how many Claude surfaces for this category
 }
 
+// Feeds are trivially swappable: change a URL or add a row. Each is a single
+// category here, but grouping is by `category` so a category could later span
+// multiple feeds. World Cup uses the general BBC football feed (no stable
+// WC-only feed exists) — the prompt filters it to 2026-WC-relevant items.
 const FEEDS: Feed[] = [
   {
     kind: "cna",
     source: "CNA",
+    category: "SG news",
     url: "https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml&category=10416",
     maxCandidates: 25,
+    pick: 3,
+  },
+  {
+    kind: "st-biz",
+    source: "Straits Times Business",
+    category: "SG finance",
+    url: "https://www.straitstimes.com/news/business/rss.xml",
+    maxCandidates: 15,
+    pick: 2,
+  },
+  {
+    kind: "lfc",
+    source: "BBC Sport",
+    category: "Liverpool FC",
+    url: "http://feeds.bbci.co.uk/sport/football/teams/liverpool/rss.xml",
+    maxCandidates: 15,
+    pick: 2,
+  },
+  {
+    kind: "worldcup",
+    source: "BBC Sport",
+    category: "World Cup",
+    url: "http://feeds.bbci.co.uk/sport/football/rss.xml",
+    maxCandidates: 25,
+    pick: 2,
   },
   {
     kind: "mothership",
     source: "Mothership",
+    category: "SG fun",
     url: "https://mothership.sg/feed/",
     maxCandidates: 15,
+    pick: 2,
   },
 ];
 
 interface CandidateItem extends RSSItem {
   kind: string;
   source: string;
+  category: string;
 }
 
 async function main(): Promise<void> {
@@ -53,7 +88,12 @@ async function main(): Promise<void> {
         const items = await fetchRSS(f.url);
         return items
           .slice(0, f.maxCandidates)
-          .map((i) => ({ ...i, kind: f.kind, source: f.source }));
+          .map((i) => ({
+            ...i,
+            kind: f.kind,
+            source: f.source,
+            category: f.category,
+          }));
       } catch (err) {
         console.error(`fetch ${f.kind} failed:`, err);
         return [];
@@ -80,9 +120,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const hard = fresh.filter((c) => c.kind === "cna");
-  const light = fresh.filter((c) => c.kind === "mothership");
-  if (hard.length === 0 && light.length === 0) return;
+  const pickByCategory = new Map(FEEDS.map((f) => [f.category, f.pick]));
+  const categoryOrder = [...new Set(FEEDS.map((f) => f.category))];
+  const groups: DigestGroup[] = categoryOrder
+    .map((category) => ({
+      category,
+      pick: pickByCategory.get(category) ?? 1,
+      items: fresh.filter((c) => c.category === category),
+    }))
+    .filter((g) => g.items.length > 0);
+  if (groups.length === 0) return;
 
   const today = new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
@@ -91,7 +138,7 @@ async function main(): Promise<void> {
     timeZone: "Asia/Singapore",
   }).format(new Date());
 
-  const prompt = buildPrompt(today, hard, light);
+  const prompt = buildPrompt(today, groups);
 
   const runId = randomUUID();
   const { error: runErr } = await supabase.from("runs").insert({
@@ -130,48 +177,46 @@ async function main(): Promise<void> {
   if (insErr) console.error("cron_seen_urls upsert failed:", insErr.message);
 }
 
-function buildPrompt(
-  today: string,
-  hard: CandidateItem[],
-  light: CandidateItem[],
-): string {
-  const hardJson = JSON.stringify(
-    hard.map((i) => ({ title: i.title, url: i.url })),
+interface DigestGroup {
+  category: string;
+  pick: number;
+  items: CandidateItem[];
+}
+
+function buildPrompt(today: string, groups: DigestGroup[]): string {
+  const groupsJson = JSON.stringify(
+    groups.map((g) => ({
+      category: g.category,
+      pick: g.pick,
+      items: g.items.map((i) => ({ title: i.title, url: i.url })),
+    })),
     null,
     2,
   );
-  const lightJson = JSON.stringify(
-    light.map((i) => ({ title: i.title, url: i.url })),
-    null,
-    2,
-  );
 
-  return `You are picking Singapore reading material for today's coffee chat.
+  return `You are assembling the operator's single daily reading digest.
 
-Pick exactly 3 items from "hard" and 2 items from "lighter". Output ONE plain-text Telegram message in this exact format — no markdown, no extra commentary before or after:
+Output ONE plain-text Telegram message — no markdown, no commentary before or after. Format:
 
-📰 Singapore — ${today}
+📰 Daily digest — ${today}
 
-Hard news
+<Category>
 • <title> — <one short sentence on what it is or why it matters>. <url>
 • ...
-• ...
 
-Lighter
-• <title> — <one short sentence on what makes it interesting or shareable>. <url>
+<next Category>
 • ...
 
 Rules:
 - Use the URLs verbatim from the JSON below.
+- One section per category, in the order given; emit a section only if you select at least one item for it. Title each section exactly with the category name.
+- Per category, pick at most its stated "pick" count; fewer is fine, never invent items.
+- For the "World Cup" category, include only items about the 2026 FIFA World Cup (qualifiers, host nations, squads, build-up). If none qualify, omit that section.
 - Keep each bullet under 200 characters.
-- If a section has fewer items than requested, fill what you can; do not invent items.
-- Prefer items that a generally-informed Singapore resident would actually want to discuss.
+- Prefer items genuinely worth a busy person's attention.
 
-Hard candidates (from CNA — policy, economy, security, civic issues):
-${hardJson}
-
-Lighter candidates (from Mothership.sg — culture, food, lifestyle, social trends):
-${lightJson}`;
+Categories (JSON: {category, pick, items:[{title,url}]}):
+${groupsJson}`;
 }
 
 main().catch((err) => {
