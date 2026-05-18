@@ -5,6 +5,7 @@ import type { BrainStreamEvent } from "@aifredo/shared";
 import { runOnce } from "./router.js";
 import { getLastRateLimit } from "./quota.js";
 import { buildChannelDigest } from "./tools/slack.js";
+import { runTradeCheck, executeTrade } from "./trade-check.js";
 
 const BEARER = process.env.BRAIN_BEARER_TOKEN;
 if (!BEARER) throw new Error("BRAIN_BEARER_TOKEN must be set");
@@ -87,6 +88,73 @@ app.post("/tools/slack/digest", async (c) => {
       externalAccountId: body.external_account_id,
     });
     return c.json(digest);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      502,
+    );
+  }
+});
+
+app.post("/tools/trade/check", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as {
+    user_id?: string;
+    intent?: {
+      symbol?: string;
+      side?: "BUY" | "SELL";
+      orderType?: "LIMIT" | "MARKET";
+      qty?: number;
+      limitPrice?: number | null;
+      stateTags?: string[];
+      thesis?: string;
+    };
+  } | null;
+  const i = b?.intent;
+  if (
+    !b?.user_id ||
+    !i?.symbol ||
+    (i.side !== "BUY" && i.side !== "SELL") ||
+    (i.orderType !== "LIMIT" && i.orderType !== "MARKET") ||
+    !i.qty ||
+    i.qty <= 0 ||
+    (i.orderType === "LIMIT" && !i.limitPrice)
+  ) {
+    return c.json({ error: "invalid trade intent" }, 400);
+  }
+  try {
+    const r = await runTradeCheck(b.user_id, {
+      symbol: i.symbol,
+      side: i.side,
+      orderType: i.orderType,
+      qty: i.qty,
+      limitPrice: i.limitPrice ?? null,
+      stateTags: i.stateTags ?? [],
+      thesis: i.thesis,
+    });
+    return c.json(r);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      502,
+    );
+  }
+});
+
+app.post("/tools/trade/execute", async (c) => {
+  const b = (await c.req.json().catch(() => null)) as {
+    user_id?: string;
+    journal_id?: string;
+    ack?: "confirm" | "override";
+  } | null;
+  if (
+    !b?.user_id ||
+    !b.journal_id ||
+    (b.ack !== "confirm" && b.ack !== "override")
+  ) {
+    return c.json({ error: "invalid execute request" }, 400);
+  }
+  try {
+    return c.json(await executeTrade(b.user_id, b.journal_id, b.ack));
   } catch (err) {
     return c.json(
       { error: err instanceof Error ? err.message : String(err) },
