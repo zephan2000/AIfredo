@@ -170,6 +170,8 @@ resource "google_compute_instance" "brain" {
     creds_passphrase          = random_password.creds_passphrase.result
     ci_sa_unique_id           = google_service_account.ci_deployer.unique_id
     integration_token_key     = random_id.integration_token_key.b64_std
+    binance_testnet_api_key    = var.binance_testnet_api_key
+    binance_testnet_api_secret = var.binance_testnet_api_secret
   })
 
   allow_stopping_for_update = true

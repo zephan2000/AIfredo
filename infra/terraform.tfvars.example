@@ -35,3 +35,7 @@ supabase_region       = "us-west-1"
 # --- Telegram ---
 telegram_bot_token     = "redacted"  # @BotFather → /newbot
 admin_telegram_user_id = "123456789"  # your numeric Telegram user ID (e.g. via @userinfobot)
+
+# --- Binance (testnet first; trade-only key, withdrawals OFF, IP-allowlist the VM) ---
+binance_testnet_api_key    = "redacted"  # testnet.binancefuture.com
+binance_testnet_api_secret = "redacted"

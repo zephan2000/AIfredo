@@ -120,3 +120,16 @@ variable "admin_telegram_user_id" {
   description = "Numeric Telegram user ID of the admin (day-1 seed user)."
   type        = string
 }
+
+# --- Binance (testnet first; trade-only, never withdrawal) ---
+variable "binance_testnet_api_key" {
+  description = "Binance USD-M Futures TESTNET API key (testnet.binancefuture.com). Live keys are a later, separately-scoped step."
+  type        = string
+  sensitive   = true
+}
+
+variable "binance_testnet_api_secret" {
+  description = "Binance USD-M Futures TESTNET API secret."
+  type        = string
+  sensitive   = true
+}
