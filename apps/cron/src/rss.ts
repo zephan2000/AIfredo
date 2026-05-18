@@ -10,7 +10,11 @@ export interface RSSItem {
   snippet: string;
 }
 
-const SNIPPET_MAX = 400;
+// Kept tight: the snippet is only a relevance/why-it-matters cue for a
+// one-line signal entry, not a briefing source. Smaller snippets keep each
+// phased per-category prompt short enough that claude -p returns before the
+// brain→tunnel→runner SSE connection times out (the Finance-phase failure).
+const SNIPPET_MAX = 200;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
