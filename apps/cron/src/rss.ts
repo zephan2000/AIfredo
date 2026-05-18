@@ -18,7 +18,17 @@ const parser = new XMLParser({
 });
 
 export async function fetchRSS(url: string): Promise<RSSItem[]> {
-  const res = await fetch(url, { headers: { "user-agent": "AIfredo/1.0 (+https://github.com/zephan2000/AIfredo)" } });
+  // Substack (and some others) 403 non-browser UAs / datacenter IPs on
+  // /feed. A browser UA clears the UA-based block; if the block is purely
+  // IP-based (GitHub runner range) this won't help — those feeds then fall
+  // out via the per-feed catch and move to A2 capture.
+  const res = await fetch(url, {
+    headers: {
+      "user-agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      accept: "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+    },
+  });
   if (!res.ok) throw new Error(`fetchRSS ${url} → ${res.status}`);
   const xml = await res.text();
   const json = parser.parse(xml) as Record<string, unknown>;

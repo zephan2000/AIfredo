@@ -205,37 +205,58 @@ async function main(): Promise<void> {
     timeZone: "Asia/Singapore",
   }).format(new Date());
 
-  const prompt = buildPrompt(today, groups);
+  // Phased: one SHORT claude call per category, run strictly sequentially
+  // (cron awaits each before the next, so the brain never has two claude
+  // subprocesses at once — respects the e2-micro serial-subprocess limit).
+  // Small per-category prompts keep each brain SSE stream short enough to
+  // finish before the tunnel/connection timeout — the failure mode the
+  // single big-prompt call hit. Sections are concatenated into ONE Telegram
+  // message. A failed/empty phase is skipped, never fails the whole digest.
+  const sections: string[] = [];
+  for (const group of groups) {
+    const runId = randomUUID();
+    const { error: runErr } = await supabase.from("runs").insert({
+      id: runId,
+      user_id: ADMIN_USER_UUID,
+      kind: RUN_KINDS.CRON_NEWS_SG,
+      status: "queued",
+    });
+    if (runErr) {
+      console.error(`phase "${group.category}" run insert:`, runErr.message);
+      continue;
+    }
 
-  const runId = randomUUID();
-  const { error: runErr } = await supabase.from("runs").insert({
-    id: runId,
-    user_id: ADMIN_USER_UUID,
-    kind: RUN_KINDS.CRON_NEWS_SG,
-    status: "queued",
-  });
-  if (runErr) throw new Error(`insert run: ${runErr.message}`);
+    let out = "";
+    try {
+      await callBrain({
+        runId,
+        userId: ADMIN_USER_UUID,
+        provider: "claude",
+        prompt: buildCategoryPrompt(group),
+        onEvent: (e: BrainStreamEvent) => {
+          if (e.type === "done") out = e.final;
+          else if (e.type === "error")
+            console.error(`phase "${group.category}" brain error:`, e.message);
+        },
+      });
+    } catch (err) {
+      console.error(`phase "${group.category}" failed:`, err);
+      continue;
+    }
+    const trimmed = out.trim();
+    if (trimmed && trimmed.toUpperCase() !== "SKIP") sections.push(trimmed);
+  }
 
-  let final = "";
-  await callBrain({
-    runId,
-    userId: ADMIN_USER_UUID,
-    provider: "claude",
-    prompt,
-    onEvent: (e: BrainStreamEvent) => {
-      if (e.type === "done") final = e.final;
-      else if (e.type === "error") {
-        console.error("brain error event:", e.message);
-      }
-    },
-  });
-
-  if (!final.trim()) {
-    console.error("brain returned empty final text; not sending");
+  if (sections.length === 0) {
+    console.error("no phase produced output; not sending");
     return;
   }
 
-  await sendMessage(chatId, final);
+  const header = `📰 Daily digest — ${today}`;
+  let message = [header, ...sections].join("\n\n");
+  if (message.length > 4000) message = message.slice(0, 3997).trimEnd() + "…";
+
+  await sendMessage(chatId, message);
 
   const seenInserts = fresh.map((c) => ({ url: c.url, kind: c.kind }));
   const { error: insErr } = await supabase
@@ -251,45 +272,42 @@ interface DigestGroup {
   items: CandidateItem[];
 }
 
-function buildPrompt(today: string, groups: DigestGroup[]): string {
-  const groupsJson = JSON.stringify(
-    groups.map((g) => ({
-      category: g.category,
-      pick: g.pick,
-      depth: g.depth,
-      items: g.items.map((i) => ({
-        title: i.title,
-        url: i.url,
-        snippet: i.snippet,
-      })),
-    })),
+// One category per call (phased). Output is ONLY this category's section —
+// no date header, no preamble — so the cron can concatenate sections into a
+// single Telegram message.
+function buildCategoryPrompt(group: DigestGroup): string {
+  const itemsJson = JSON.stringify(
+    group.items.map((i) => ({ title: i.title, url: i.url, snippet: i.snippet })),
     null,
     2,
   );
 
-  return `You are assembling the operator's single daily reading digest. The operator is ramping a client-delivery role in banking/fintech — bias selection toward items he could actually discuss or learn from, not routine wire copy.
+  const depthRule =
+    group.depth === "deep"
+      ? `For each selected item write 2–3 sentences — what happened, why it matters, and the one thing worth understanding (the angle that lets the reader actually talk to it). Up to ~400 characters per item.`
+      : `For each selected item write one tight line, under 150 characters — just what happened.`;
 
-Output ONE plain-text Telegram message — no markdown, no commentary before or after. Format:
+  const wcRule =
+    group.category === "World Cup"
+      ? `\n- Include ONLY items about the 2026 FIFA World Cup (qualifiers, hosts, squads, build-up). If none qualify, output exactly the single word: SKIP`
+      : `\n- If nothing here is worth the reader's attention, output exactly the single word: SKIP`;
 
-📰 Daily digest — ${today}
+  return `You are writing ONE section of the operator's daily reading digest. He is ramping a client-delivery role in banking/fintech — bias selection toward items he could actually discuss or learn from, not routine wire copy.
 
-<Category>
+Output plain text only — no markdown, no commentary before or after. Output exactly this section and nothing else:
+
+${group.category}
 • <headline> — <summary>. <url>
 • ...
 
-<next Category>
-• ...
-
 Rules:
-- Use each item's URL verbatim from the JSON; ground every summary in that item's "snippet" (the article lede), not just its title or your own assumptions. If a snippet is a paywalled teaser, summarise what it does say and don't invent the rest.
-- One section per category, in the JSON order; emit a section only if you select ≥1 item for it. Title each section exactly with the category name.
-- Per category, select at most its "pick" count of the most substantive items; fewer is fine, never invent items.
-- depth "deep" (SG news, Finance, Tech): write 2–3 sentences per item — what happened, why it matters, and the one thing worth understanding (the angle that lets him talk to it). Up to ~400 characters per item.
-- depth "brief" (Liverpool FC, World Cup, SG fun): one tight line per item, under 150 characters — just what happened.
-- For "World Cup", include only items about the 2026 FIFA World Cup (qualifiers, hosts, squads, build-up); omit the section if none qualify.
+- First line is exactly "${group.category}". Then one bullet ("• ") per selected item.
+- Select at most ${group.pick} of the most substantive items; fewer is fine, never invent items.
+- Use each item's URL verbatim from the JSON; ground every summary in that item's "snippet" (the article lede), not the title alone or your assumptions. If a snippet is a paywalled teaser, summarise what it does say and don't invent the rest.
+- ${depthRule}${wcRule}
 
-Categories (JSON: {category, pick, depth, items:[{title,url,snippet}]}):
-${groupsJson}`;
+Items (JSON: [{title,url,snippet}]):
+${itemsJson}`;
 }
 
 main().catch((err) => {
