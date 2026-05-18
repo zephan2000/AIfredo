@@ -100,3 +100,34 @@ ${JSON.stringify(intent, null, 2)}
 His trade history (most recent first; realizedPnl negative = loss):
 ${history.length ? JSON.stringify(history, null, 2) : "(no prior history available)"}`;
 }
+
+export interface ReviewTradeInput {
+  ts: string;
+  symbol: string;
+  side: string;
+  qty: number;
+  estNotional?: number | null;
+  stateTags: string[];
+  verdict?: string | null;
+  ack: string;
+  status: string;
+}
+
+export function buildTradeReviewPrompt(
+  day: string,
+  trades: ReviewTradeInput[],
+): string {
+  return `You are the operator's end-of-day trading-discipline review. Reflective, blunt, habit-focused — NOT market advice.
+
+Output ONE plain-text Telegram message, no markdown:
+
+📓 Trade review — ${day}
+
+- Lead with the discipline read: did he repeat known anti-patterns today? Did he OVERRIDE warnings, and how did those resolve vs CONFIRM/CLEAR ones?
+- Call out specifics: overrides of WARN, emotional state tags (revenge/fomo/tilt), blocked-by-cap attempts, aborted intents.
+- End with the single highest-leverage habit to watch tomorrow.
+- If nothing notable / no trades: say so in one line. Never invent.
+
+Today's trade_journal (status: filled|blocked|rejected|aborted|pending; ack: none|confirm|override):
+${trades.length ? JSON.stringify(trades, null, 2) : "(no trades logged today)"}`;
+}

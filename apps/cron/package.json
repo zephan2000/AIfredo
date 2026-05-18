@@ -6,6 +6,7 @@
   "scripts": {
     "news-sg": "tsx src/news-sg.ts",
     "slack-daily": "tsx src/slack-daily.ts",
+    "trade-review": "tsx src/trade-review.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
