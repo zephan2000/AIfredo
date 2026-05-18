@@ -200,7 +200,14 @@ async function main(): Promise<void> {
       items: fresh.filter((c) => c.category === category),
     }))
     .filter((g) => g.items.length > 0);
-  if (groups.length === 0) return;
+  if (groups.length === 0) {
+    console.log("no non-empty category groups; exiting");
+    return;
+  }
+  console.log(
+    `candidates=${candidates.length} fresh=${fresh.length} groups=` +
+      groups.map((g) => `${g.category}:${g.items.length}`).join(" "),
+  );
 
   const today = new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
@@ -248,7 +255,14 @@ async function main(): Promise<void> {
       continue;
     }
     const trimmed = out.trim();
-    if (trimmed && trimmed.toUpperCase() !== "SKIP") sections.push(trimmed);
+    if (trimmed && trimmed.toUpperCase() !== "SKIP") {
+      sections.push(trimmed);
+      console.log(`phase "${group.category}": ok (${trimmed.length} chars)`);
+    } else {
+      console.log(
+        `phase "${group.category}": ${trimmed ? "SKIP" : "empty"}`,
+      );
+    }
   }
 
   if (sections.length === 0) {
@@ -260,6 +274,9 @@ async function main(): Promise<void> {
   let message = [header, ...sections].join("\n\n");
   if (message.length > 4000) message = message.slice(0, 3997).trimEnd() + "…";
 
+  console.log(
+    `sending digest: ${sections.length} sections, ${message.length} chars`,
+  );
   await sendMessage(chatId, message);
 
   // Dedupe by url: the same article can appear under two feeds/kinds (e.g.
