@@ -18,16 +18,17 @@ interface Feed {
   url: string;
   maxCandidates: number; // fetch cap into the candidate pool
   pick: number; // how many Claude surfaces (per category; same within one)
-  depth: Depth; // "deep" = 2-3 sentence body-grounded; "brief" = one line
+  depth: Depth; // "deep" = headline + one why-it-matters clause; "brief" = bare headline
 }
 
 // Trivially swappable: edit a URL or add a row. Grouping is by `category`, so
-// a category spans multiple feeds (Finance, Tech). All feeds are RSS 2.0
-// (fetchRSS doesn't parse Atom — The Verge was dropped for that reason).
-// World Cup uses the general BBC football feed (no stable WC-only feed
-// exists) — the prompt filters it to 2026-WC-relevant items. Substack
-// maxCandidates are low: they post infrequently and some are paywalled
-// (RSS yields only a teaser), so a few recent items is enough.
+// a category spans multiple feeds (Finance, Tech). RSS 2.0 and Atom both
+// parse (fetchRSS handles both — the YouTube feed is Atom). World Cup uses
+// the general BBC football feed (no stable WC-only feed) — prompt-filtered
+// to 2026-WC items. Paywalled feeds (Pragmatic Engineer, the Substacks)
+// were removed: RSS yields only a teaser, so summaries are hollow — source
+// those via A2 capture. "deep" categories get a one-clause why-it-matters;
+// "brief" are bare pointers (sports/fun/video).
 const FEEDS: Feed[] = [
   {
     kind: "cna",
@@ -56,25 +57,33 @@ const FEEDS: Feed[] = [
     pick: 3,
     depth: "deep",
   },
-  // Net Interest / Fintech Blueprint / Fintech: Under the Hood (Substack)
-  // were dropped: Substack IP-blocks GitHub runners (403 even with a browser
-  // UA — confirmed run 26022968426). Operator decision: source these via A2
-  // curated capture instead, not the automated cron.
+  {
+    kind: "finextra",
+    source: "Finextra",
+    category: "Finance",
+    url: "https://www.finextra.com/rss/headlines.aspx",
+    maxCandidates: 12,
+    pick: 3,
+    depth: "deep",
+  },
+  // Substacks (Net Interest / Fintech Blueprint / Fintech: Under the Hood)
+  // and Pragmatic Engineer were removed — Substack IP-blocks CI runners and
+  // PE is paywalled (teaser-only RSS). Sourced via A2 capture instead.
+  {
+    kind: "ars",
+    source: "Ars Technica",
+    category: "Tech",
+    url: "http://feeds.arstechnica.com/arstechnica/index",
+    maxCandidates: 10,
+    pick: 2,
+    depth: "deep",
+  },
   {
     kind: "hn",
     source: "Hacker News",
     category: "Tech",
     url: "https://hnrss.org/frontpage",
-    maxCandidates: 12,
-    pick: 2,
-    depth: "deep",
-  },
-  {
-    kind: "pragmatic",
-    source: "The Pragmatic Engineer",
-    category: "Tech",
-    url: "https://newsletter.pragmaticengineer.com/feed",
-    maxCandidates: 5,
+    maxCandidates: 10,
     pick: 2,
     depth: "deep",
   },
@@ -102,6 +111,15 @@ const FEEDS: Feed[] = [
     category: "SG fun",
     url: "https://mothership.sg/feed/",
     maxCandidates: 10,
+    pick: 1,
+    depth: "brief",
+  },
+  {
+    kind: "11fs-explores",
+    source: "11:FS Explores",
+    category: "Watch",
+    url: "https://www.youtube.com/feeds/videos.xml?playlist_id=PLETYuCAuWiG5bdZ_rFrbu8qABXlmAn_1W",
+    maxCandidates: 6,
     pick: 1,
     depth: "brief",
   },
@@ -267,29 +285,30 @@ function buildCategoryPrompt(group: DigestGroup): string {
     2,
   );
 
-  const depthRule =
+  const lineRule =
     group.depth === "deep"
-      ? `For each selected item write 2–3 sentences — what happened, why it matters, and the one thing worth understanding (the angle that lets the reader actually talk to it). Up to ~400 characters per item.`
-      : `For each selected item write one tight line, under 150 characters — just what happened.`;
+      ? `Each bullet: "• <headline> — <why it matters to a fintech/banking associate, ≤15 words>. <url>". Drop the "— …" clause entirely (just "• <headline> <url>") if the snippet gives no real basis for one — never pad or invent. Hard cap 180 characters per bullet.`
+      : `Each bullet: "• <headline> <url>" — bare, no commentary. Under 120 characters.`;
 
   const wcRule =
     group.category === "World Cup"
-      ? `\n- Include ONLY items about the 2026 FIFA World Cup (qualifiers, hosts, squads, build-up). If none qualify, output exactly the single word: SKIP`
-      : `\n- If nothing here is worth the reader's attention, output exactly the single word: SKIP`;
+      ? `\n- Include ONLY items about the 2026 FIFA World Cup (qualifiers, hosts, squads, build-up). If none qualify, output exactly: SKIP`
+      : group.category === "Watch"
+        ? `\n- Prefer the most recent video, and ones hosted by Simon Taylor. This is a watch-later pointer; do not summarise the video.`
+        : `\n- If nothing here is genuinely worth attention, output exactly: SKIP`;
 
-  return `You are writing ONE section of the operator's daily reading digest. He is ramping a client-delivery role in banking/fintech — bias selection toward items he could actually discuss or learn from, not routine wire copy.
+  return `You are writing ONE section of the operator's daily digest. He is ramping a client-delivery role in banking/fintech. This is a scannable signal list, NOT a briefing — terse, skimmable in seconds. He deep-dives on demand by opening the link.
 
-Output plain text only — no markdown, no commentary before or after. Output exactly this section and nothing else:
+Output plain text only — no markdown, no preamble, no closing. Output exactly this section and nothing else:
 
 ${group.category}
-• <headline> — <summary>. <url>
 • ...
 
 Rules:
 - First line is exactly "${group.category}". Then one bullet ("• ") per selected item.
-- Select at most ${group.pick} of the most substantive items; fewer is fine, never invent items.
-- Use each item's URL verbatim from the JSON; ground every summary in that item's "snippet" (the article lede), not the title alone or your assumptions. If a snippet is a paywalled teaser, summarise what it does say and don't invent the rest.
-- ${depthRule}${wcRule}
+- Select at most ${group.pick} of the genuinely most useful items; fewer is better than filler; never invent items.
+- Use each item's URL verbatim from the JSON. Base any clause only on the item's "snippet"; if the snippet is empty or boilerplate, give the bare headline + url.
+- ${lineRule}${wcRule}
 
 Items (JSON: [{title,url,snippet}]):
 ${itemsJson}`;

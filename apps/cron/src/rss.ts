@@ -35,25 +35,77 @@ export async function fetchRSS(url: string): Promise<RSSItem[]> {
 
   const channel = (json.rss as { channel?: Record<string, unknown> } | undefined)?.channel;
   const itemsRaw = channel?.item;
-  if (!itemsRaw) return [];
-  const arr = Array.isArray(itemsRaw) ? itemsRaw : [itemsRaw];
+  if (itemsRaw) {
+    const arr = Array.isArray(itemsRaw) ? itemsRaw : [itemsRaw];
+    return arr
+      .map((it) => {
+        const item = it as Record<string, unknown>;
+        const rawBody =
+          extractText(item["content:encoded"]) ||
+          extractText(item.description);
+        return {
+          title: extractText(item.title).trim(),
+          url: extractText(item.link).trim(),
+          publishedAt: typeof item.pubDate === "string" ? item.pubDate : null,
+          snippet: toSnippet(rawBody),
+        };
+      })
+      .filter((i) => i.title && i.url);
+  }
 
-  return arr
-    .map((it) => {
-      const item = it as Record<string, unknown>;
-      const title = extractText(item.title);
-      const link = extractText(item.link);
-      const pub = typeof item.pubDate === "string" ? item.pubDate : null;
-      const rawBody =
-        extractText(item["content:encoded"]) || extractText(item.description);
-      return {
-        title: title.trim(),
-        url: link.trim(),
-        publishedAt: pub,
-        snippet: toSnippet(rawBody),
-      };
-    })
-    .filter((i) => i.title && i.url);
+  // Atom (e.g. YouTube feeds: <feed><entry>…). Link is an attribute, not
+  // text; YouTube puts the blurb in media:group/media:description.
+  const entriesRaw = (json.feed as { entry?: unknown } | undefined)?.entry;
+  if (entriesRaw) {
+    const arr = Array.isArray(entriesRaw) ? entriesRaw : [entriesRaw];
+    return arr
+      .map((it) => {
+        const e = it as Record<string, unknown>;
+        const mediaGroup = e["media:group"] as
+          | Record<string, unknown>
+          | undefined;
+        const rawBody =
+          extractText(mediaGroup?.["media:description"]) ||
+          extractText(e.summary) ||
+          extractText(e.content);
+        const pub =
+          typeof e.published === "string"
+            ? e.published
+            : typeof e.updated === "string"
+              ? e.updated
+              : null;
+        return {
+          title: extractText(e.title).trim(),
+          url: atomHref(e.link).trim(),
+          publishedAt: pub,
+          snippet: toSnippet(rawBody),
+        };
+      })
+      .filter((i) => i.title && i.url);
+  }
+
+  return [];
+}
+
+function atomHref(link: unknown): string {
+  const pick = (l: unknown): string => {
+    if (l && typeof l === "object") {
+      const o = l as Record<string, unknown>;
+      const href = o["@_href"];
+      return typeof href === "string" ? href : "";
+    }
+    return typeof l === "string" ? l : "";
+  };
+  if (Array.isArray(link)) {
+    const alt = link.find(
+      (l) =>
+        l &&
+        typeof l === "object" &&
+        (l as Record<string, unknown>)["@_rel"] === "alternate",
+    );
+    return pick(alt ?? link[0]);
+  }
+  return pick(link);
 }
 
 function toSnippet(html: string): string {
