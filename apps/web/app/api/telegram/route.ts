@@ -13,7 +13,8 @@ import {
   recordInboundMessage,
   recordOutboundMessage,
 } from "@/lib/users";
-import { callBrain, fetchSlackDigest } from "@/lib/brain";
+import { callBrain, fetchSlackDigest, tradeCheck, tradeExecute } from "@/lib/brain";
+import { latestPendingTrade, abortTrade } from "@/lib/trade";
 import {
   deleteDigest,
   ensureDefault,
@@ -260,6 +261,115 @@ async function handleDigestCommand(
   await sendMessage(chatId, DIGEST_USAGE);
 }
 
+const TRADE_USAGE =
+  "Usage: /trade SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag …] [thesis]\n" +
+  "e.g. /trade BTCUSDT BUY 0.01 LIMIT 60000 #revenge win it back\n" +
+  "Then reply CONFIRM (or OVERRIDE if warned) / ABORT. 5-min window.";
+
+async function handleTradeCommand(
+  prompt: string,
+  userId: string,
+  chatId: number,
+): Promise<void> {
+  const t = prompt.trim().split(/\s+/).slice(1);
+  const symbol = (t[0] ?? "").toUpperCase();
+  const side = (t[1] ?? "").toUpperCase();
+  const qty = Number(t[2]);
+  const orderType = (t[3] ?? "").toUpperCase();
+  if (
+    !symbol ||
+    (side !== "BUY" && side !== "SELL") ||
+    !Number.isFinite(qty) ||
+    qty <= 0 ||
+    (orderType !== "LIMIT" && orderType !== "MARKET")
+  ) {
+    await sendMessage(chatId, TRADE_USAGE);
+    return;
+  }
+  let rest = t.slice(4);
+  let limitPrice: number | null = null;
+  if (orderType === "LIMIT") {
+    limitPrice = Number(t[4]);
+    if (!Number.isFinite(limitPrice) || limitPrice <= 0) {
+      await sendMessage(chatId, "LIMIT needs a positive PRICE.\n" + TRADE_USAGE);
+      return;
+    }
+    rest = t.slice(5);
+  }
+  const stateTags = rest
+    .filter((x) => x.startsWith("#"))
+    .map((x) => x.slice(1).toLowerCase())
+    .filter(Boolean);
+  const thesis = rest.filter((x) => !x.startsWith("#")).join(" ") || undefined;
+
+  try {
+    const r = await tradeCheck(userId, {
+      symbol,
+      side: side as "BUY" | "SELL",
+      orderType: orderType as "LIMIT" | "MARKET",
+      qty,
+      limitPrice,
+      stateTags,
+      thesis,
+    });
+    const head =
+      r.verdict === "clear"
+        ? `✅ CLEAR — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} USDT, ${r.mode})`
+        : `⚠️ WARN — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} USDT, ${r.mode})`;
+    const ackLine =
+      r.verdict === "warn"
+        ? "Repeats a pattern. Reply OVERRIDE to place anyway, or ABORT."
+        : "Reply CONFIRM to place, or ABORT.";
+    await sendMessage(
+      chatId,
+      `${head}\n\n${r.reasons}\n\n${ackLine} (5-min window)`,
+    );
+  } catch (err) {
+    await sendMessage(
+      chatId,
+      `⚠️ check failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+async function handleTradeAck(
+  word: "CONFIRM" | "OVERRIDE" | "ABORT",
+  userId: string,
+  chatId: number,
+): Promise<void> {
+  const pending = await latestPendingTrade(userId);
+  if (!pending) {
+    await sendMessage(chatId, "Nothing pending (or the 5-min window expired).");
+    return;
+  }
+  if (word === "ABORT") {
+    await abortTrade(pending.id);
+    await sendMessage(chatId, `Aborted ${pending.symbol}.`);
+    return;
+  }
+  if (pending.verdict === "warn" && word === "CONFIRM") {
+    await sendMessage(
+      chatId,
+      `${pending.symbol} was WARNed — reply OVERRIDE to place it anyway, or ABORT.`,
+    );
+    return;
+  }
+  try {
+    const r = await tradeExecute(
+      userId,
+      pending.id,
+      word === "OVERRIDE" ? "override" : "confirm",
+    );
+    const icon = r.status === "filled" ? "✅" : "🛑";
+    await sendMessage(chatId, `${icon} ${pending.symbol}: ${r.status} — ${r.detail}`);
+  } catch (err) {
+    await sendMessage(
+      chatId,
+      `⚠️ execute failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 async function handleUpdate(
   update: TelegramUpdate,
   baseUrl: string,
@@ -304,6 +414,26 @@ async function handleUpdate(
       msg.from.username ?? msg.from.first_name,
     );
     await handleDigestCommand(prompt, userCtx.user_id, chatId);
+    return;
+  } else if (prompt.startsWith("/trade") || prompt === "/trade") {
+    const userCtx = await ensureUserFromTelegram(
+      msg.from.id,
+      chatId,
+      msg.from.username ?? msg.from.first_name,
+    );
+    await handleTradeCommand(prompt, userCtx.user_id, chatId);
+    return;
+  } else if (/^(CONFIRM|OVERRIDE|ABORT)\b/i.test(prompt.trim())) {
+    const word = prompt.trim().split(/\s+/)[0]!.toUpperCase() as
+      | "CONFIRM"
+      | "OVERRIDE"
+      | "ABORT";
+    const userCtx = await ensureUserFromTelegram(
+      msg.from.id,
+      chatId,
+      msg.from.username ?? msg.from.first_name,
+    );
+    await handleTradeAck(word, userCtx.user_id, chatId);
     return;
   }
 

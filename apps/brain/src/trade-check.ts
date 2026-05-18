@@ -110,6 +110,14 @@ export async function runTradeCheck(
     text.trim().split("\n").slice(1).join("\n").trim() ||
     (verdict === "clear" ? "No known anti-pattern matched." : "Flagged.");
 
+  // At most one live pending intent per user — keeps the Telegram
+  // CONFIRM/OVERRIDE/ABORT mapping unambiguous without a pointer table.
+  await supabase
+    .from("trade_journal")
+    .update({ executor_status: "aborted" })
+    .eq("user_id", userId)
+    .eq("executor_status", "pending");
+
   const { data: row, error } = await supabase
     .from("trade_journal")
     .insert({
