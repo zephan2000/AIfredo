@@ -56,33 +56,10 @@ const FEEDS: Feed[] = [
     pick: 3,
     depth: "deep",
   },
-  {
-    kind: "netinterest",
-    source: "Net Interest",
-    category: "Finance",
-    url: "https://netinterest.substack.com/feed",
-    maxCandidates: 5,
-    pick: 3,
-    depth: "deep",
-  },
-  {
-    kind: "ftblueprint",
-    source: "Fintech Blueprint",
-    category: "Finance",
-    url: "https://lex.substack.com/feed",
-    maxCandidates: 5,
-    pick: 3,
-    depth: "deep",
-  },
-  {
-    kind: "fthood",
-    source: "Fintech: Under the Hood",
-    category: "Finance",
-    url: "https://jasshah.substack.com/feed",
-    maxCandidates: 5,
-    pick: 3,
-    depth: "deep",
-  },
+  // Net Interest / Fintech Blueprint / Fintech: Under the Hood (Substack)
+  // were dropped: Substack IP-blocks GitHub runners (403 even with a browser
+  // UA — confirmed run 26022968426). Operator decision: source these via A2
+  // curated capture instead, not the automated cron.
   {
     kind: "hn",
     source: "Hacker News",
@@ -258,7 +235,15 @@ async function main(): Promise<void> {
 
   await sendMessage(chatId, message);
 
-  const seenInserts = fresh.map((c) => ({ url: c.url, kind: c.kind }));
+  // Dedupe by url: the same article can appear under two feeds/kinds (e.g.
+  // a Liverpool story in both the LFC and general-football BBC feeds).
+  // Duplicate urls in one upsert payload trip Postgres "ON CONFLICT ...
+  // cannot affect row a second time".
+  const seenInserts = [
+    ...new Map(
+      fresh.map((c) => [c.url, { url: c.url, kind: c.kind }]),
+    ).values(),
+  ];
   const { error: insErr } = await supabase
     .from("cron_seen_urls")
     .upsert(seenInserts, { onConflict: "url" });
