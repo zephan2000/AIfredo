@@ -331,11 +331,17 @@ async function handleTradeCommand(
         : `⚠️ WARN — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} USDT, ${r.mode})`;
     const ackLine =
       r.verdict === "warn"
-        ? "Repeats a pattern. Reply OVERRIDE to place anyway, or ABORT."
-        : "Reply CONFIRM to place, or ABORT.";
-    await sendMessage(
+        ? "Repeats a pattern. Override to place anyway, or abort."
+        : "Tap to place, or abort.";
+    const j = r.journalId;
+    const proceed =
+      r.verdict === "warn"
+        ? { text: "⚠️ OVERRIDE", callback_data: `trade:override:${j}` }
+        : { text: "✅ CONFIRM", callback_data: `trade:confirm:${j}` };
+    await sendKeyboard(
       chatId,
       `${head}\n\n${r.reasons}\n\n${ackLine} (5-min window)`,
+      [[proceed, { text: "✖ ABORT", callback_data: `trade:abort:${j}` }]],
     );
   } catch (err) {
     await sendMessage(
