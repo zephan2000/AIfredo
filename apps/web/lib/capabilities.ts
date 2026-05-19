@@ -34,7 +34,7 @@ Commands:
 /digest scope <name> #a #b  — set channels (or: all)
 /digest ignore <name> #x  — exclude channels (or: none)
 /digest run <name>  — preview a digest now
-/trade [VENUE] SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag] [thesis]  — discipline-checked trade; I warn you if it repeats a past mistake, then CONFIRM/OVERRIDE/ABORT. VENUE = binance (default, USD-M futures) or tiger (equities). Testnet/paper until armed.
+/trade  — discipline-checked trade. Send it alone for a guided step-by-step (tap through venue/side/type/tags), or one-shot: /trade [VENUE] SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag] [thesis]. I warn you if it repeats a past mistake, then CONFIRM/OVERRIDE/ABORT. VENUE = binance (default, USD-M futures) or tiger (equities). Testnet/paper until armed. /cancel aborts a guided draft.
 
 Coming soon: /forget, /keep, /new for managing chat history.
 

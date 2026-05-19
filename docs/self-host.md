@@ -311,6 +311,7 @@ curl -sX POST "https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands" \
   -d '{"commands":[
     {"command":"menu","description":"Open the action menu"},
     {"command":"trade","description":"Discipline-checked trade (binance/tiger)"},
+    {"command":"cancel","description":"Cancel the in-progress /trade flow"},
     {"command":"digest","description":"Slack digests (list/new/run/…)"},
     {"command":"connect","description":"Link a third-party account (Slack)"},
     {"command":"info","description":"What can AIfredo do?"},

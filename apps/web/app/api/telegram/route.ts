@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import {
+  ANTIPATTERN_TAGS,
   RUN_KINDS,
   TELEGRAM_EDIT_DEBOUNCE_MS,
   TelegramUpdateSchema,
@@ -12,8 +13,18 @@ import {
   sendKeyboard,
   answerCallback,
   editTextClearKeyboard,
+  editMessageWithKeyboard,
   type InlineKeyboard,
 } from "@/lib/telegram";
+import {
+  getDraft,
+  startDraft,
+  patchDraft,
+  toggleTag,
+  clearDraft,
+  type WizardStep,
+  type TradeDraftData,
+} from "@/lib/trade-draft";
 import {
   createRun,
   ensureUserFromTelegram,
@@ -275,11 +286,58 @@ async function handleDigestCommand(
 }
 
 const TRADE_USAGE =
-  "Usage: /trade [VENUE] SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag …] [thesis]\n" +
+  "Send /trade on its own for a guided step-by-step (tap through it).\n" +
+  "Or one-shot: /trade [VENUE] SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag …] [thesis]\n" +
   "VENUE = binance (default, USD-M futures) or tiger (equities).\n" +
   "e.g. /trade BTCUSDT BUY 0.01 LIMIT 60000 #revenge win it back\n" +
   "e.g. /trade tiger AAPL BUY 10 LIMIT 180 #fomo\n" +
   "Then tap CONFIRM/OVERRIDE/ABORT (or reply with the word). 5-min window.";
+
+interface TradeIntent {
+  venue: "binance-futures" | "tiger";
+  symbol: string;
+  side: "BUY" | "SELL";
+  orderType: "LIMIT" | "MARKET";
+  qty: number;
+  limitPrice: number | null;
+  stateTags: string[];
+  thesis?: string;
+}
+
+async function presentVerdict(
+  userId: string,
+  chatId: number,
+  intent: TradeIntent,
+): Promise<void> {
+  try {
+    const r = await tradeCheck(userId, intent);
+    const unit = intent.venue === "tiger" ? "USD" : "USDT";
+    const desc = `${intent.symbol} ${intent.side} ${intent.qty} ${intent.orderType}`;
+    const head =
+      r.verdict === "clear"
+        ? `✅ CLEAR — ${desc} (~${r.estNotional} ${unit}, ${intent.venue}, ${r.mode})`
+        : `⚠️ WARN — ${desc} (~${r.estNotional} ${unit}, ${intent.venue}, ${r.mode})`;
+    const ackLine =
+      r.verdict === "warn"
+        ? "Repeats a pattern. Override to place anyway, or abort."
+        : "Tap to place, or abort.";
+    const j = r.journalId;
+    const proceed =
+      r.verdict === "warn"
+        ? { text: "⚠️ OVERRIDE", callback_data: `trade:override:${j}` }
+        : { text: "✅ CONFIRM", callback_data: `trade:confirm:${j}` };
+    await sendKeyboard(
+      chatId,
+      `${head}\n\n${r.reasons}\n\n${ackLine} (5-min window)`,
+      [[proceed, { text: "✖ ABORT", callback_data: `trade:abort:${j}` }]],
+    );
+  } catch (err) {
+    await sendMessage(
+      chatId,
+      `⚠️ check failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 async function handleTradeCommand(
   prompt: string,
@@ -289,9 +347,16 @@ async function handleTradeCommand(
   let t = prompt.trim().split(/\s+/).slice(1);
   let venue: "binance-futures" | "tiger" = "binance-futures";
   const v0 = (t[0] ?? "").toLowerCase();
-  if (v0 === "tiger" || v0 === "binance" || v0 === "binance-futures") {
+  const venueOnly =
+    v0 === "tiger" || v0 === "binance" || v0 === "binance-futures";
+  if (venueOnly) {
     venue = v0 === "tiger" ? "tiger" : "binance-futures";
     t = t.slice(1);
+  }
+  // Bare `/trade` (optionally just a venue word) → guided flow.
+  if (t.length === 0) {
+    await startWizard(chatId, userId, venueOnly ? venue : undefined);
+    return;
   }
   const symbol = (t[0] ?? "").toUpperCase();
   const side = (t[1] ?? "").toUpperCase();
@@ -323,41 +388,304 @@ async function handleTradeCommand(
     .filter(Boolean);
   const thesis = rest.filter((x) => !x.startsWith("#")).join(" ") || undefined;
 
-  try {
-    const r = await tradeCheck(userId, {
-      symbol,
-      side: side as "BUY" | "SELL",
-      orderType: orderType as "LIMIT" | "MARKET",
-      qty,
-      limitPrice,
-      stateTags,
-      thesis,
-      venue,
-    });
-    const unit = venue === "tiger" ? "USD" : "USDT";
-    const head =
-      r.verdict === "clear"
-        ? `✅ CLEAR — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} ${unit}, ${venue}, ${r.mode})`
-        : `⚠️ WARN — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} ${unit}, ${venue}, ${r.mode})`;
-    const ackLine =
-      r.verdict === "warn"
-        ? "Repeats a pattern. Override to place anyway, or abort."
-        : "Tap to place, or abort.";
-    const j = r.journalId;
-    const proceed =
-      r.verdict === "warn"
-        ? { text: "⚠️ OVERRIDE", callback_data: `trade:override:${j}` }
-        : { text: "✅ CONFIRM", callback_data: `trade:confirm:${j}` };
-    await sendKeyboard(
-      chatId,
-      `${head}\n\n${r.reasons}\n\n${ackLine} (5-min window)`,
-      [[proceed, { text: "✖ ABORT", callback_data: `trade:abort:${j}` }]],
+  await presentVerdict(userId, chatId, {
+    venue,
+    symbol,
+    side: side as "BUY" | "SELL",
+    orderType: orderType as "LIMIT" | "MARKET",
+    qty,
+    limitPrice,
+    stateTags,
+    thesis,
+  });
+}
+
+// ---- Guided /trade flow -------------------------------------------------
+
+const TW_CANCEL = { text: "✖ Cancel", callback_data: "tw:cancel" };
+
+function venueLabel(v: "binance-futures" | "tiger"): string {
+  return v === "tiger" ? "Tiger (equities)" : "Binance (USD-M futures)";
+}
+
+function tagsText(selected: string[]): string {
+  return (
+    "Any anti-pattern tags? Tap to toggle, then Done.\n" +
+    `Selected: ${selected.length ? selected.join(", ") : "(none)"}`
+  );
+}
+
+function tagsKeyboard(selected: string[]): InlineKeyboard {
+  const rows: InlineKeyboard = [];
+  for (let i = 0; i < ANTIPATTERN_TAGS.length; i += 2) {
+    rows.push(
+      ANTIPATTERN_TAGS.slice(i, i + 2).map((tag) => ({
+        text: `${selected.includes(tag) ? "✅" : "▫️"} ${tag}`,
+        callback_data: `tw:tag:${tag}`,
+      })),
     );
-  } catch (err) {
-    await sendMessage(
+  }
+  rows.push([{ text: "✓ Done", callback_data: "tw:tagsdone" }, TW_CANCEL]);
+  return rows;
+}
+
+async function sendWizardStep(
+  chatId: number,
+  step: WizardStep,
+  draft: TradeDraftData,
+): Promise<void> {
+  switch (step) {
+    case "venue":
+      await sendKeyboard(chatId, "📈 New trade — pick a venue:", [
+        [
+          {
+            text: "⚡ Binance — USD-M futures",
+            callback_data: "tw:venue:binance-futures",
+          },
+        ],
+        [{ text: "📈 Tiger — equities", callback_data: "tw:venue:tiger" }],
+        [TW_CANCEL],
+      ]);
+      return;
+    case "symbol":
+      await sendKeyboard(
+        chatId,
+        "Symbol? Send it as a message (e.g. BTCUSDT, or AAPL for Tiger).",
+        [[TW_CANCEL]],
+      );
+      return;
+    case "side":
+      await sendKeyboard(chatId, "Side?", [
+        [
+          { text: "🟢 BUY", callback_data: "tw:side:BUY" },
+          { text: "🔴 SELL", callback_data: "tw:side:SELL" },
+        ],
+        [TW_CANCEL],
+      ]);
+      return;
+    case "qty":
+      await sendKeyboard(chatId, "Quantity? Send a number.", [[TW_CANCEL]]);
+      return;
+    case "type":
+      await sendKeyboard(chatId, "Order type?", [
+        [
+          { text: "LIMIT", callback_data: "tw:type:LIMIT" },
+          { text: "MARKET", callback_data: "tw:type:MARKET" },
+        ],
+        [TW_CANCEL],
+      ]);
+      return;
+    case "price":
+      await sendKeyboard(chatId, "Limit price? Send a number.", [[TW_CANCEL]]);
+      return;
+    case "tags":
+      await sendKeyboard(
+        chatId,
+        tagsText(draft.stateTags),
+        tagsKeyboard(draft.stateTags),
+      );
+      return;
+    case "thesis":
+      await sendKeyboard(
+        chatId,
+        "One-line thesis? Send it as a message, or Skip.",
+        [[{ text: "Skip", callback_data: "tw:thesisskip" }], [TW_CANCEL]],
+      );
+      return;
+  }
+}
+
+async function startWizard(
+  chatId: number,
+  userId: string,
+  venue?: "binance-futures" | "tiger",
+): Promise<void> {
+  await startDraft(chatId, userId);
+  if (venue) {
+    const s = await patchDraft(chatId, { venue }, "symbol");
+    await sendMessage(chatId, `Venue: ${venueLabel(venue)}`);
+    await sendWizardStep(chatId, "symbol", s?.draft ?? { stateTags: [] });
+    return;
+  }
+  await sendWizardStep(chatId, "venue", { stateTags: [] });
+}
+
+function buildIntent(draft: TradeDraftData): TradeIntent | null {
+  if (
+    !draft.venue ||
+    !draft.symbol ||
+    (draft.side !== "BUY" && draft.side !== "SELL") ||
+    !draft.qty ||
+    (draft.orderType !== "LIMIT" && draft.orderType !== "MARKET") ||
+    (draft.orderType === "LIMIT" && !draft.limitPrice)
+  ) {
+    return null;
+  }
+  return {
+    venue: draft.venue,
+    symbol: draft.symbol,
+    side: draft.side,
+    orderType: draft.orderType,
+    qty: draft.qty,
+    limitPrice: draft.orderType === "LIMIT" ? draft.limitPrice ?? null : null,
+    stateTags: draft.stateTags,
+    thesis: draft.thesis,
+  };
+}
+
+async function finalizeWizard(
+  userId: string,
+  chatId: number,
+  draft: TradeDraftData,
+): Promise<void> {
+  const intent = buildIntent(draft);
+  await clearDraft(chatId);
+  if (!intent) {
+    await sendMessage(chatId, "Draft incomplete — send /trade to start over.");
+    return;
+  }
+  await presentVerdict(userId, chatId, intent);
+}
+
+// Free-text wizard steps; the value is the user's next message.
+async function handleWizardText(
+  userId: string,
+  chatId: number,
+  state: { step: WizardStep; draft: TradeDraftData },
+  text: string,
+): Promise<void> {
+  const value = text.trim();
+  switch (state.step) {
+    case "symbol": {
+      const sym = value.toUpperCase();
+      if (!sym) {
+        await sendKeyboard(chatId, "Send a symbol, e.g. BTCUSDT.", [
+          [TW_CANCEL],
+        ]);
+        return;
+      }
+      const s = await patchDraft(chatId, { symbol: sym }, "side");
+      if (s) await sendWizardStep(chatId, "side", s.draft);
+      return;
+    }
+    case "qty": {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) {
+        await sendKeyboard(chatId, "Send a positive number for quantity.", [
+          [TW_CANCEL],
+        ]);
+        return;
+      }
+      const s = await patchDraft(chatId, { qty: n }, "type");
+      if (s) await sendWizardStep(chatId, "type", s.draft);
+      return;
+    }
+    case "price": {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0) {
+        await sendKeyboard(
+          chatId,
+          "Send a positive number for the limit price.",
+          [[TW_CANCEL]],
+        );
+        return;
+      }
+      const s = await patchDraft(chatId, { limitPrice: n }, "tags");
+      if (s) await sendWizardStep(chatId, "tags", s.draft);
+      return;
+    }
+    case "thesis": {
+      const s = await patchDraft(
+        chatId,
+        { thesis: value || undefined },
+        "thesis",
+      );
+      await finalizeWizard(userId, chatId, s?.draft ?? state.draft);
+      return;
+    }
+    default:
+      // A button step: nudge instead of routing to Claude.
+      await sendMessage(chatId, "Tap a button above, or /cancel.");
+      return;
+  }
+}
+
+async function handleWizardCallback(
+  data: string,
+  userId: string,
+  chatId: number,
+  messageId: number,
+): Promise<void> {
+  const [, action, arg] = data.split(":");
+
+  if (action === "cancel") {
+    await clearDraft(chatId);
+    await editTextClearKeyboard(chatId, messageId, "✖ Trade cancelled.");
+    return;
+  }
+
+  const state = await getDraft(chatId);
+  if (!state) {
+    await editTextClearKeyboard(
       chatId,
-      `⚠️ check failed: ${err instanceof Error ? err.message : String(err)}`,
+      messageId,
+      "This trade draft expired. Send /trade to start again.",
     );
+    return;
+  }
+
+  switch (action) {
+    case "venue": {
+      const v: "binance-futures" | "tiger" =
+        arg === "tiger" ? "tiger" : "binance-futures";
+      const s = await patchDraft(chatId, { venue: v }, "symbol");
+      await editTextClearKeyboard(chatId, messageId, `Venue: ${venueLabel(v)}`);
+      if (s) await sendWizardStep(chatId, "symbol", s.draft);
+      return;
+    }
+    case "side": {
+      const side: "BUY" | "SELL" = arg === "SELL" ? "SELL" : "BUY";
+      const s = await patchDraft(chatId, { side }, "qty");
+      await editTextClearKeyboard(chatId, messageId, `Side: ${side}`);
+      if (s) await sendWizardStep(chatId, "qty", s.draft);
+      return;
+    }
+    case "type": {
+      const orderType: "LIMIT" | "MARKET" =
+        arg === "MARKET" ? "MARKET" : "LIMIT";
+      const next: WizardStep = orderType === "LIMIT" ? "price" : "tags";
+      const s = await patchDraft(chatId, { orderType }, next);
+      await editTextClearKeyboard(chatId, messageId, `Type: ${orderType}`);
+      if (s) await sendWizardStep(chatId, next, s.draft);
+      return;
+    }
+    case "tag": {
+      if (!arg) return;
+      const tags = await toggleTag(chatId, arg);
+      await editMessageWithKeyboard(
+        chatId,
+        messageId,
+        tagsText(tags),
+        tagsKeyboard(tags),
+      );
+      return;
+    }
+    case "tagsdone": {
+      const s = await patchDraft(chatId, {}, "thesis");
+      const tags = (s ?? state).draft.stateTags;
+      await editTextClearKeyboard(
+        chatId,
+        messageId,
+        `Tags: ${tags.length ? tags.join(", ") : "(none)"}`,
+      );
+      await sendWizardStep(chatId, "thesis", (s ?? state).draft);
+      return;
+    }
+    case "thesisskip": {
+      await editTextClearKeyboard(chatId, messageId, "Thesis: (skipped)");
+      await finalizeWizard(userId, chatId, state.draft);
+      return;
+    }
   }
 }
 
@@ -475,9 +803,14 @@ async function handleCallback(
     return;
   }
 
+  if (data.startsWith("tw:")) {
+    await handleWizardCallback(data, userCtx.user_id, chatId, messageId);
+    return;
+  }
+
   switch (data) {
     case "menu:trade":
-      await sendMessage(chatId, TRADE_USAGE);
+      await startWizard(chatId, userCtx.user_id);
       return;
     case "menu:review":
       await sendMessage(
@@ -506,6 +839,35 @@ async function handleUpdate(
   const msg = update.message;
   if (!msg?.text) return;
   const chatId = msg.chat.id;
+
+  // Guided /trade flow takes precedence over normal routing while a draft
+  // is open. `/cancel` always aborts it; any other slash command is an
+  // escape hatch (abandon the draft so the user is never stuck), so it
+  // falls through to the normal command dispatch below.
+  const trimmed = msg.text.trim();
+  const draftState = await getDraft(chatId);
+  if (trimmed === "/cancel") {
+    if (draftState) {
+      await clearDraft(chatId);
+      await sendMessage(chatId, "✖ Trade cancelled.");
+    } else {
+      await sendMessage(chatId, "Nothing to cancel.");
+    }
+    return;
+  }
+  if (draftState) {
+    if (trimmed.startsWith("/")) {
+      await clearDraft(chatId);
+    } else {
+      const userCtx = await ensureUserFromTelegram(
+        msg.from.id,
+        chatId,
+        msg.from.username ?? msg.from.first_name,
+      );
+      await handleWizardText(userCtx.user_id, chatId, draftState, msg.text);
+      return;
+    }
+  }
 
   let provider: "claude" | "codex" = "claude";
   let prompt = msg.text.trim();

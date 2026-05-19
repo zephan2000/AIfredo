@@ -103,3 +103,28 @@ export async function editTextClearKeyboard(
     console.error("editTextClearKeyboard failed", res.status, body);
   }
 }
+
+// Re-render a message's text + keyboard in place (used to reflect tag
+// toggles without spamming new messages).
+export async function editMessageWithKeyboard(
+  chat_id: number,
+  message_id: number,
+  text: string,
+  keyboard: InlineKeyboard,
+): Promise<void> {
+  const res = await fetch(`${TG_API}/bot${token()}/editMessageText`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id,
+      message_id,
+      text: text.length > 4000 ? text.slice(0, 4000) + "…" : text,
+      reply_markup: { inline_keyboard: keyboard },
+    }),
+  });
+  // 400 is usually "message is not modified" when a tap is a no-op.
+  if (!res.ok && res.status !== 400) {
+    const body = await res.text().catch(() => "");
+    console.error("editMessageWithKeyboard failed", res.status, body);
+  }
+}

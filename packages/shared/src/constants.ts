@@ -16,3 +16,20 @@ export type RunKind = (typeof RUN_KINDS)[keyof typeof RUN_KINDS];
 export const STREAM_HEARTBEAT_MS = 15_000;
 export const TELEGRAM_EDIT_DEBOUNCE_MS = 750;
 export const TELEGRAM_MESSAGE_MAX_LEN = 4096;
+
+// Anti-pattern state tags the /trade discipline check reasons about. Kept
+// here so the guided-flow toggle buttons and any prompt copy stay in sync;
+// consistent spelling is what makes the WARN pattern-match across trades.
+export const ANTIPATTERN_TAGS = [
+  "revenge",
+  "fomo",
+  "averaging-down",
+  "fear",
+  "greed",
+  "boredom",
+] as const;
+
+export type AntipatternTag = (typeof ANTIPATTERN_TAGS)[number];
+
+// A guided /trade draft expires if untouched for this long.
+export const TRADE_DRAFT_TTL_MS = 15 * 60_000;
