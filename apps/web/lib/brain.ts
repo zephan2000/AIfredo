@@ -115,6 +115,7 @@ interface TradeIntentWire {
   limitPrice?: number | null;
   stateTags: string[];
   thesis?: string;
+  venue?: "binance-futures" | "tiger";
 }
 
 export interface TradeCheckResult {

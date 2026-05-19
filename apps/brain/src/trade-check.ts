@@ -1,12 +1,36 @@
 import { makeServiceClient, buildTradeCheckPrompt } from "@aifredo/shared";
-import type { TradeIntentInput, PriorTradeInput } from "@aifredo/shared";
+import type {
+  TradeIntentInput,
+  PriorTradeInput,
+  TradeVenue,
+} from "@aifredo/shared";
 import { runClaude } from "./runners/claude.js";
-import {
-  getMarkPrice,
-  getUserTrades,
-  placeOrder,
-  type TradeMode,
-} from "./tools/trade.js";
+import type { TradeMode, UserTrade, PlaceOrderArgs } from "./tools/trade.js";
+import * as binance from "./tools/trade.js";
+import * as tiger from "./tools/tiger.js";
+
+// binance and tiger expose the same minimal contract, all keyed on
+// TradeMode, so venue routing is a single switch — no per-venue branching
+// downstream. (binance also exports getPositionRisk; not part of the
+// contract, so it stays out of VenueClient.)
+interface VenueClient {
+  getMarkPrice(mode: TradeMode, symbol: string): Promise<number>;
+  getUserTrades(
+    mode: TradeMode,
+    symbol: string,
+    limit?: number,
+  ): Promise<UserTrade[]>;
+  placeOrder(
+    mode: TradeMode,
+    args: PlaceOrderArgs,
+  ): Promise<{ orderId: number; status: string; raw: unknown }>;
+}
+function venueOf(v?: string | null): TradeVenue {
+  return v === "tiger" ? "tiger" : "binance-futures";
+}
+function venueClient(v: TradeVenue): VenueClient {
+  return v === "tiger" ? tiger : binance;
+}
 
 const supabase = makeServiceClient();
 
@@ -53,17 +77,19 @@ export async function runTradeCheck(
   intent: TradeIntentInput,
 ): Promise<CheckResult> {
   const cfg = await getConfig(userId);
+  const venue = venueOf(intent.venue);
+  const client = venueClient(venue);
 
   const price =
     intent.orderType === "LIMIT" && intent.limitPrice
       ? intent.limitPrice
-      : await getMarkPrice(cfg.mode, intent.symbol);
+      : await client.getMarkPrice(cfg.mode, intent.symbol);
   const estNotional = Math.round(intent.qty * price * 100) / 100;
 
   // Real fills (with realizedPnl) + recent logged intents = the memory.
   const history: PriorTradeInput[] = [];
   try {
-    const fills = await getUserTrades(cfg.mode, intent.symbol, 100);
+    const fills = await client.getUserTrades(cfg.mode, intent.symbol, 100);
     for (const f of fills.slice(-50).reverse()) {
       history.push({
         ts: new Date(f.time).toISOString(),
@@ -122,6 +148,7 @@ export async function runTradeCheck(
     .from("trade_journal")
     .insert({
       user_id: userId,
+      venue,
       symbol: intent.symbol,
       side: intent.side,
       order_type: intent.orderType,
@@ -233,7 +260,10 @@ export async function executeTrade(
     price: j.limit_price == null ? undefined : Number(j.limit_price),
   };
   try {
-    const r = await placeOrder(cfg.mode, orderArgs);
+    const r = await venueClient(venueOf(j.venue as string)).placeOrder(
+      cfg.mode,
+      orderArgs,
+    );
     return finalize(
       "filled",
       `order ${r.orderId} ${r.status} (${cfg.mode})`,

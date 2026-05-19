@@ -54,6 +54,8 @@ Raw messages (oldest-first per channel):
 ${body || "(no messages in the window)"}`;
 }
 
+export type TradeVenue = "binance-futures" | "tiger";
+
 export interface TradeIntentInput {
   symbol: string;
   side: "BUY" | "SELL";
@@ -62,6 +64,7 @@ export interface TradeIntentInput {
   limitPrice?: number | null;
   stateTags: string[];
   thesis?: string;
+  venue?: TradeVenue;
 }
 
 export interface PriorTradeInput {

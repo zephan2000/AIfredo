@@ -275,16 +275,24 @@ async function handleDigestCommand(
 }
 
 const TRADE_USAGE =
-  "Usage: /trade SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag …] [thesis]\n" +
+  "Usage: /trade [VENUE] SYMBOL BUY|SELL QTY LIMIT|MARKET [PRICE] [#tag …] [thesis]\n" +
+  "VENUE = binance (default, USD-M futures) or tiger (equities).\n" +
   "e.g. /trade BTCUSDT BUY 0.01 LIMIT 60000 #revenge win it back\n" +
-  "Then reply CONFIRM (or OVERRIDE if warned) / ABORT. 5-min window.";
+  "e.g. /trade tiger AAPL BUY 10 LIMIT 180 #fomo\n" +
+  "Then tap CONFIRM/OVERRIDE/ABORT (or reply with the word). 5-min window.";
 
 async function handleTradeCommand(
   prompt: string,
   userId: string,
   chatId: number,
 ): Promise<void> {
-  const t = prompt.trim().split(/\s+/).slice(1);
+  let t = prompt.trim().split(/\s+/).slice(1);
+  let venue: "binance-futures" | "tiger" = "binance-futures";
+  const v0 = (t[0] ?? "").toLowerCase();
+  if (v0 === "tiger" || v0 === "binance" || v0 === "binance-futures") {
+    venue = v0 === "tiger" ? "tiger" : "binance-futures";
+    t = t.slice(1);
+  }
   const symbol = (t[0] ?? "").toUpperCase();
   const side = (t[1] ?? "").toUpperCase();
   const qty = Number(t[2]);
@@ -324,11 +332,13 @@ async function handleTradeCommand(
       limitPrice,
       stateTags,
       thesis,
+      venue,
     });
+    const unit = venue === "tiger" ? "USD" : "USDT";
     const head =
       r.verdict === "clear"
-        ? `✅ CLEAR — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} USDT, ${r.mode})`
-        : `⚠️ WARN — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} USDT, ${r.mode})`;
+        ? `✅ CLEAR — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} ${unit}, ${venue}, ${r.mode})`
+        : `⚠️ WARN — ${symbol} ${side} ${qty} ${orderType} (~${r.estNotional} ${unit}, ${venue}, ${r.mode})`;
     const ackLine =
       r.verdict === "warn"
         ? "Repeats a pattern. Override to place anyway, or abort."

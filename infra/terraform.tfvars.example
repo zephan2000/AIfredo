@@ -39,3 +39,13 @@ admin_telegram_user_id = "123456789"  # your numeric Telegram user ID (e.g. via 
 # --- Binance (testnet first; trade-only key, withdrawals OFF, IP-allowlist the VM) ---
 binance_testnet_api_key    = "redacted"  # testnet.binancefuture.com
 binance_testnet_api_secret = "redacted"
+
+# --- Tiger Brokers (paper account = testnet-equivalent; trade-only) ---
+# Apply for Tiger Open API access, generate an RSA key pair, register the
+# PUBLIC key with Tiger. base64 the PRIVATE key PEM into one line, e.g.:
+#   base64 -w0 tiger_private_key.pem    (macOS: base64 -i tiger_private_key.pem)
+# Leave tiger_live_account empty until live trading is separately armed.
+tiger_id              = ""  # Tiger developer ID
+tiger_private_key_b64 = ""  # base64 of the RSA private-key PEM (single line)
+tiger_paper_account   = ""  # simulation account id (used when mode=testnet)
+tiger_live_account    = ""  # live account id (used only when mode=live + armed)

@@ -172,6 +172,10 @@ resource "google_compute_instance" "brain" {
     integration_token_key     = random_id.integration_token_key.b64_std
     binance_testnet_api_key    = var.binance_testnet_api_key
     binance_testnet_api_secret = var.binance_testnet_api_secret
+    tiger_id                   = var.tiger_id
+    tiger_private_key_b64      = var.tiger_private_key_b64
+    tiger_paper_account        = var.tiger_paper_account
+    tiger_live_account         = var.tiger_live_account
   })
 
   allow_stopping_for_update = true

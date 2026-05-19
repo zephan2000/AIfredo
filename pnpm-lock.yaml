@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@tigeropenapi/tigeropen@0.4.0':
+    hash: fhjsmrayfro7ywpubhn3gyitha
+    path: patches/@tigeropenapi__tigeropen@0.4.0.patch
+
 importers:
 
   .:
@@ -20,6 +25,9 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.7
         version: 1.19.14(hono@4.12.18)
+      '@tigeropenapi/tigeropen':
+        specifier: 0.4.0
+        version: 0.4.0(patch_hash=fhjsmrayfro7ywpubhn3gyitha)
       execa:
         specifier: ^9.5.1
         version: 9.6.1
@@ -119,6 +127,9 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@bufbuild/protobuf@2.12.0':
+    resolution: {integrity: sha512-B/XlCaFIP8LOwzo+bz5uFzATYokcwCKQcghqnlfwSmM5eX/qTkvDBnDPs+gXtX/RyjxJ4DRikECcPJbyALA8FA==}
 
   '@emnapi/runtime@1.10.0':
     resolution: {integrity: sha512-ewvYlk86xUoGI0zQRNq/mC+16R1QeDlKQy21Ki3oSYXNgLb45GV1P6A0M+/s6nyCuNDqe5VpaY84BzXGwVbwFA==}
@@ -510,6 +521,10 @@ packages:
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
 
+  '@tigeropenapi/tigeropen@0.4.0':
+    resolution: {integrity: sha512-wcbACdaZxx/GAHbCSoDMf9hkbsVjU6BHmZFc1LCiZMD0ywuba/cntkSbF8wQqhJdIca6u+kx9IJTgDaXxKOZEg==}
+    engines: {node: '>=16.0.0'}
+
   '@types/ms@2.1.0':
     resolution: {integrity: sha512-GsCCIZDE/p3i96vtEqx+7dBUGXrc7zeSK3wwPHIaRThS+9OhWIXRqzs4d6k1SVU8g91DrNRWxWUGhp5KXQb2VA==}
 
@@ -760,6 +775,8 @@ packages:
 
 snapshots:
 
+  '@bufbuild/protobuf@2.12.0': {}
+
   '@emnapi/runtime@1.10.0':
     dependencies:
       tslib: 2.8.1
@@ -1009,6 +1026,10 @@ snapshots:
   '@swc/helpers@0.5.15':
     dependencies:
       tslib: 2.8.1
+
+  '@tigeropenapi/tigeropen@0.4.0(patch_hash=fhjsmrayfro7ywpubhn3gyitha)':
+    dependencies:
+      '@bufbuild/protobuf': 2.12.0
 
   '@types/ms@2.1.0': {}
 

@@ -107,6 +107,7 @@ app.post("/tools/trade/check", async (c) => {
       limitPrice?: number | null;
       stateTags?: string[];
       thesis?: string;
+      venue?: "binance-futures" | "tiger";
     };
   } | null;
   const i = b?.intent;
@@ -130,6 +131,7 @@ app.post("/tools/trade/check", async (c) => {
       limitPrice: i.limitPrice ?? null,
       stateTags: i.stateTags ?? [],
       thesis: i.thesis,
+      venue: i.venue,
     });
     return c.json(r);
   } catch (err) {

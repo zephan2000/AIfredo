@@ -12,6 +12,7 @@
   "dependencies": {
     "@aifredo/shared": "workspace:*",
     "@hono/node-server": "^1.13.7",
+    "@tigeropenapi/tigeropen": "0.4.0",
     "execa": "^9.5.1",
     "hono": "^4.6.10",
     "zod": "^3.23.8"

@@ -133,3 +133,35 @@ variable "binance_testnet_api_secret" {
   type        = string
   sensitive   = true
 }
+
+# --- Tiger Brokers (paper account = testnet-equivalent; trade-only) ---
+# One developer ID + RSA key serves both accounts; mode picks the account.
+# tiger_paper_account is the simulation account (used when mode=testnet),
+# tiger_live_account the real one (used only when mode=live AND armed).
+variable "tiger_id" {
+  description = "Tiger Open API developer ID (tiger_id)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tiger_private_key_b64" {
+  description = "Tiger Open API RSA private key, PEM, base64-encoded (single-line). Decoded on the VM into TIGER_PRIVATE_KEY_B64."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tiger_paper_account" {
+  description = "Tiger paper/simulation account id (testnet-equivalent)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tiger_live_account" {
+  description = "Tiger live account id. Leave empty until live trading is separately armed."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
