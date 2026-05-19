@@ -6,7 +6,14 @@ import {
   TelegramUpdateSchema,
 } from "@aifredo/shared";
 import type { BrainStreamEvent, TelegramUpdate } from "@aifredo/shared";
-import { editMessage, sendMessage } from "@/lib/telegram";
+import {
+  editMessage,
+  sendMessage,
+  sendKeyboard,
+  answerCallback,
+  editTextClearKeyboard,
+  type InlineKeyboard,
+} from "@/lib/telegram";
 import {
   createRun,
   ensureUserFromTelegram,
@@ -47,10 +54,12 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!parsed.success) return NextResponse.json({ ok: true });
 
   const update = parsed.data;
-  if (!update.message?.text) return NextResponse.json({ ok: true });
+  const cb = update.callback_query;
+  const fromId = cb ? cb.from.id : update.message?.from.id;
+  if (!cb && !update.message?.text) return NextResponse.json({ ok: true });
 
   const adminId = process.env.ADMIN_TELEGRAM_USER_ID;
-  if (adminId && String(update.message.from.id) !== adminId) {
+  if (adminId && String(fromId) !== adminId) {
     return NextResponse.json({ ok: true });
   }
 
@@ -58,7 +67,11 @@ export async function POST(req: Request): Promise<NextResponse> {
   // request origin is the correct, stable base for building OAuth links.
   const baseUrl = new URL(req.url).origin;
 
-  waitUntil(handleUpdate(update, baseUrl));
+  if (cb) {
+    waitUntil(handleCallback(update, baseUrl));
+  } else {
+    waitUntil(handleUpdate(update, baseUrl));
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -370,6 +383,106 @@ async function handleTradeAck(
   }
 }
 
+const MENU_KEYBOARD: InlineKeyboard = [
+  [
+    { text: "📈 Trade", callback_data: "menu:trade" },
+    { text: "📓 Trade review", callback_data: "menu:review" },
+  ],
+  [
+    { text: "📨 Digests", callback_data: "menu:digests" },
+    { text: "🔌 Connect", callback_data: "menu:connect" },
+  ],
+  [{ text: "❔ Help", callback_data: "menu:help" }],
+];
+
+async function handleTradeCallback(
+  action: "confirm" | "override" | "abort",
+  journalId: string,
+  userId: string,
+  chatId: number,
+  messageId: number,
+): Promise<void> {
+  if (action === "abort") {
+    await abortTrade(journalId);
+    await editTextClearKeyboard(chatId, messageId, "✖ Aborted.");
+    return;
+  }
+  try {
+    const r = await tradeExecute(userId, journalId, action);
+    const icon = r.status === "filled" ? "✅" : "🛑";
+    await editTextClearKeyboard(
+      chatId,
+      messageId,
+      `${icon} ${r.status} — ${r.detail}`,
+    );
+  } catch (err) {
+    await editTextClearKeyboard(
+      chatId,
+      messageId,
+      `⚠️ execute failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+async function handleCallback(
+  update: TelegramUpdate,
+  baseUrl: string,
+): Promise<void> {
+  const cb = update.callback_query;
+  if (!cb) return;
+  await answerCallback(cb.id);
+  const data = cb.data;
+  const chatId = cb.message?.chat.id;
+  const messageId = cb.message?.message_id;
+  if (!data || chatId == null || messageId == null) return;
+
+  const userCtx = await ensureUserFromTelegram(
+    cb.from.id,
+    chatId,
+    cb.from.username ?? cb.from.first_name,
+  );
+
+  if (data.startsWith("trade:")) {
+    const [, action, journalId] = data.split(":");
+    if (
+      (action === "confirm" || action === "override" || action === "abort") &&
+      journalId
+    ) {
+      await handleTradeCallback(
+        action,
+        journalId,
+        userCtx.user_id,
+        chatId,
+        messageId,
+      );
+    }
+    return;
+  }
+
+  switch (data) {
+    case "menu:trade":
+      await sendMessage(chatId, TRADE_USAGE);
+      return;
+    case "menu:review":
+      await sendMessage(
+        chatId,
+        "📓 The daily trade review runs ~22:00 SGT (read-only): it summarises the day's /trade journal vs your anti-patterns. It never places orders.",
+      );
+      return;
+    case "menu:digests":
+      await handleDigestCommand("/digest list", userCtx.user_id, chatId);
+      return;
+    case "menu:connect":
+      await sendMessage(chatId, "Link a third-party account: /connect slack");
+      return;
+    case "menu:help":
+      await sendMessage(chatId, CAPABILITIES_TEXT);
+      return;
+    default:
+      return;
+  }
+}
+
 async function handleUpdate(
   update: TelegramUpdate,
   baseUrl: string,
@@ -386,10 +499,14 @@ async function handleUpdate(
   } else if (prompt.startsWith("/claude ")) {
     prompt = prompt.slice("/claude ".length);
   } else if (prompt === "/start") {
-    await sendMessage(
+    await sendKeyboard(
       chatId,
-      "Hi. Send me a message. Use /info to see what I can do.",
+      "Hi. Send me a message, or pick an action below. /info lists everything.",
+      MENU_KEYBOARD,
     );
+    return;
+  } else if (prompt === "/menu") {
+    await sendKeyboard(chatId, "📋 AIfredo — choose:", MENU_KEYBOARD);
     return;
   } else if (prompt === "/info" || prompt === "/help") {
     await sendMessage(chatId, CAPABILITIES_TEXT);

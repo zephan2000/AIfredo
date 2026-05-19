@@ -37,6 +37,23 @@ export const TelegramUpdateSchema = z.object({
       date: z.number(),
     })
     .optional(),
+  callback_query: z
+    .object({
+      id: z.string(),
+      from: z.object({
+        id: z.number(),
+        username: z.string().optional(),
+        first_name: z.string().optional(),
+      }),
+      message: z
+        .object({
+          message_id: z.number(),
+          chat: z.object({ id: z.number(), type: z.string() }),
+        })
+        .optional(),
+      data: z.string().optional(),
+    })
+    .optional(),
 });
 
 export type TelegramUpdate = z.infer<typeof TelegramUpdateSchema>;
