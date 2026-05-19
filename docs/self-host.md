@@ -309,11 +309,16 @@ curl -s "https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo" | jq .
 curl -sX POST "https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands" \
   -H "content-type: application/json" \
   -d '{"commands":[
+    {"command":"menu","description":"Open the action menu"},
+    {"command":"trade","description":"Discipline-checked trade (binance/tiger)"},
+    {"command":"digest","description":"Slack digests (list/new/run/…)"},
+    {"command":"connect","description":"Link a third-party account (Slack)"},
     {"command":"info","description":"What can AIfredo do?"},
     {"command":"help","description":"Alias for /info"},
-    {"command":"start","description":"Welcome message"},
     {"command":"codex","description":"Route this message to Codex"},
-    {"command":"claude","description":"Explicit Claude (default)"}
+    {"command":"claude","description":"Explicit Claude (default)"},
+    {"command":"start","description":"Welcome / menu"},
+    {"command":"admin","description":"Operator config (set/show)"}
   ]}' | jq .
 ```
 
