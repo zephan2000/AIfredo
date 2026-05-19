@@ -145,8 +145,22 @@ variable "tiger_id" {
   default     = ""
 }
 
-variable "tiger_private_key_b64" {
-  description = "Tiger Open API RSA private key, PEM, base64-encoded (single-line). Decoded on the VM into TIGER_PRIVATE_KEY_B64."
+# Provide the RSA private key in EITHER form, quoted/heredoc'd valid HCL:
+#   - a PEM block (-----BEGIN [RSA] PRIVATE KEY-----, heredoc), or
+#   - the bare base64 of the DER (single quoted line, no -----BEGIN).
+# The Tiger SDK's loader accepts both (PEM → createPrivateKey; bare base64
+# → DER PKCS#1 then PKCS#8). Terraform base64-encodes whichever is set for
+# single-line .env transport; the brain base64-decodes it once and hands
+# the original string to the SDK. pk8 wins if both are set.
+variable "tiger_private_key_pk8" {
+  description = "Tiger RSA private key — PKCS#8 PEM or bare base64 DER. Not double-base64-encoded."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "tiger_private_key_pk1" {
+  description = "Tiger RSA private key — PKCS#1 PEM or bare base64 DER. Used only if pk8 is empty."
   type        = string
   sensitive   = true
   default     = ""

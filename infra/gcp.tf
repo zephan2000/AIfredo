@@ -159,21 +159,21 @@ resource "google_compute_instance" "brain" {
   }
 
   metadata_startup_script = templatefile("${path.module}/vm-startup.sh.tftpl", {
-    tunnel_token              = cloudflare_zero_trust_tunnel_cloudflared.brain.tunnel_token
-    repo_url                  = "https://github.com/${var.github_owner}/${var.github_repo_name}.git"
-    brain_bearer_token        = random_password.brain_bearer.result
-    supabase_url              = "https://${supabase_project.main.id}.supabase.co"
-    supabase_service_role_key = data.supabase_apikeys.main.service_role_key
-    vercel_ingest_url         = "${local.vercel_url}/api/ingest"
-    domain                    = var.domain
-    creds_bucket              = google_storage_bucket.creds.name
-    creds_passphrase          = random_password.creds_passphrase.result
-    ci_sa_unique_id           = google_service_account.ci_deployer.unique_id
-    integration_token_key     = random_id.integration_token_key.b64_std
+    tunnel_token               = cloudflare_zero_trust_tunnel_cloudflared.brain.tunnel_token
+    repo_url                   = "https://github.com/${var.github_owner}/${var.github_repo_name}.git"
+    brain_bearer_token         = random_password.brain_bearer.result
+    supabase_url               = "https://${supabase_project.main.id}.supabase.co"
+    supabase_service_role_key  = data.supabase_apikeys.main.service_role_key
+    vercel_ingest_url          = "${local.vercel_url}/api/ingest"
+    domain                     = var.domain
+    creds_bucket               = google_storage_bucket.creds.name
+    creds_passphrase           = random_password.creds_passphrase.result
+    ci_sa_unique_id            = google_service_account.ci_deployer.unique_id
+    integration_token_key      = random_id.integration_token_key.b64_std
     binance_testnet_api_key    = var.binance_testnet_api_key
     binance_testnet_api_secret = var.binance_testnet_api_secret
     tiger_id                   = var.tiger_id
-    tiger_private_key_b64      = var.tiger_private_key_b64
+    tiger_private_key_b64      = base64encode(var.tiger_private_key_pk8 != "" ? var.tiger_private_key_pk8 : var.tiger_private_key_pk1)
     tiger_paper_account        = var.tiger_paper_account
     tiger_live_account         = var.tiger_live_account
   })

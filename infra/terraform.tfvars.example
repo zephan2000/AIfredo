@@ -42,10 +42,19 @@ binance_testnet_api_secret = "redacted"
 
 # --- Tiger Brokers (paper account = testnet-equivalent; trade-only) ---
 # Apply for Tiger Open API access, generate an RSA key pair, register the
-# PUBLIC key with Tiger. base64 the PRIVATE key PEM into one line, e.g.:
-#   base64 -w0 tiger_private_key.pem    (macOS: base64 -i tiger_private_key.pem)
-# Leave tiger_live_account empty until live trading is separately armed.
-tiger_id              = ""  # Tiger developer ID
-tiger_private_key_b64 = ""  # base64 of the RSA private-key PEM (single line)
-tiger_paper_account   = ""  # simulation account id (used when mode=testnet)
-tiger_live_account    = ""  # live account id (used only when mode=live + armed)
+# PUBLIC key with Tiger. Set ONE of the two private-key vars (pk8 wins if
+# both): a quoted single-line bare base64 of the DER, OR a PEM heredoc.
+# Set only one. Terraform base64-encodes it for VM transport. Leave
+# tiger_live_account empty until live trading is separately armed.
+tiger_id            = ""  # Tiger developer ID
+tiger_paper_account = ""  # simulation account id (used when mode=testnet)
+tiger_live_account  = ""  # live account id (used only when mode=live + armed)
+# Bare base64-DER form (single line, must be quoted):
+tiger_private_key_pk8 = ""
+# ...or PEM heredoc form:
+# tiger_private_key_pk8 = <<-EOT
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# EOT
+# tiger_private_key_pk1 = ""   # PKCS#1 alternative (used only if pk8 empty)
